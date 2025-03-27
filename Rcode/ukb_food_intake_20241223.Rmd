@@ -1,0 +1,1390 @@
+---
+title: "ukb_food_intakes"
+author: "Caulu Lin"
+date: "5/31/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+pacman::p_load(ukbtools,vcfR,readxl, broom, dplyr, tidyr, scales, caret, lm.beta)
+```
+#20241028: we replace NA with 0 for food intake based on the subjects answered the vegetable intake questions
+
+```{r ukb_data}
+relsbj<-read.csv("/media/cailu/Seagate Backup Plus Drive/data_20230311/UKB/Geno/ukb_rel_a57780_s488170.dat", sep="")
+ukb_gen_rel_count(relsbj, plot = TRUE)+geom_hline(yintercept =0.0884, linetype="dashed")+theme_bw()+theme(legend.position = c(0.7,0.85))
+
+w57780_2023.04.25 <- read.table("/media/cailu/Seagate Backup Plus Drive/data_20230311/UKB/dat_download/w57780_2023-04-25.csv", quote="\"", comment.char="")
+
+subjects_race <- read.delim("/media/cailu/Seagate Backup Plus Drive/data_20230311/UKB/dat_download/Geno20221018/GD_AIM/G1000_subj_scores.txt")%>%
+                filter(European>=0.87)%>% ##keep Europan only https://academic.oup.com/g3journal/article/9/8/2447/6026822#235922457
+                filter(!(Sample %in% w57780_2023.04.25 $V1))%>%
+                filter(Sample>0)
+x<-subjects_race[subjects_race$Sample%in%relsbj$ID1|subjects_race$Sample%in%relsbj$ID2,]
+list_to_remove<- ukb_gen_samples_to_remove(relsbj, ukb_with_data=x,cutoff = 0.0884)
+
+
+subjects_race<-subjects_race%>%
+  filter(!(Sample %in% list_to_remove))
+
+# To load the included example data
+
+my_ukb_data <- ukb_df("ukb52378", path = "/media/cailu/Seagate Backup Plus Drive1/data_20230311/UKB/dat_download")
+names<-names(my_ukb_data)[which(grepl('intake|salt|consumers', names(my_ukb_data)))]
+my_ukb_data<-my_ukb_data[,c("eid", names)]
+
+my_ukb_data<-my_ukb_data[my_ukb_data$eid %in%subjects_race$Sample,]
+```
+
+#vegetable_consumers_f103990, 38 related fields
+#104100	Avocado intake	Current Field determines who was asked to answer Field 104100
+#104000	Baked bean intake	Current Field determines who was asked to answer Field 104000
+#104130	Beetroot intake	Current Field determines who was asked to answer Field 104130
+#104030	Boiled/baked potatoes intake	Current Field determines who was asked to answer Field 104030
+#104110	Broad bean intake	Current Field determines who was asked to answer Field 104110
+#104140	Broccoli intake	Current Field determines who was asked to answer Field 104140
+#104150	Butternut squash intake	Current Field determines who was asked to answer Field 104150
+#104160	Cabbage/kale intake	Current Field determines who was asked to answer Field 104160
+#104170	Carrot intake	Current Field determines who was asked to answer Field 104170
+#104180	Cauliflower intake	Current Field determines who was asked to answer Field 104180
+#104190	Celery intake	Current Field determines who was asked to answer Field 104190
+#104080	Coleslaw intake	Current Field determines who was asked to answer Field 104080
+#104200	Courgette intake	Current Field determines who was asked to answer Field 104200
+#104210	Cucumber intake	Current Field determines who was asked to answer Field 104210
+#104340	Fresh tomato intake	Current Field determines who was asked to answer Field 104340
+#104020	Fried potatoes intake	Current Field determines who was asked to answer Field 104020
+#104220	Garlic intake	Current Field determines who was asked to answer Field 104220
+#104120	Green bean intake	Current Field determines who was asked to answer Field 104120
+#104230	Leek intake	Current Field determines who was asked to answer Field 104230
+#104240	Lettuce intake	Current Field determines who was asked to answer Field 104240
+#104050	Mashed potato intake	Current Field determines who was asked to answer Field 104050
+#104060	Mixed vegetable intake	Current Field determines who was asked to answer Field 104060
+#104250	Mushroom intake	Current Field determines who was asked to answer Field 104250
+#104260	Onion intake	Current Field determines who was asked to answer Field 104260
+#104380	Other vegetables intake	Current Field determines who was asked to answer Field 104380
+#104270	Parsnip intake	Current Field determines who was asked to answer Field 104270
+#104280	Pea intake	Current Field determines who was asked to answer Field 104280
+#104010	Pulses intake	Current Field determines who was asked to answer Field 104010
+#104090	Side salad intake	Current Field determines who was asked to answer Field 104090
+#104300	Spinach intake	Current Field determines who was asked to answer Field 104300
+#104310	Sprouts intake	Current Field determines who was asked to answer Field 104310
+#104290	Sweet pepper intake	Current Field determines who was asked to answer Field 104290
+#104330	Sweet potato intake	Current Field determines who was asked to answer Field 104330
+#104320	Sweetcorn intake	Current Field determines who was asked to answer Field 104320
+#104350	Tinned tomato intake	Current Field determines who was asked to answer Field 104350
+#104360	Turnip/swede intake	Current Field determines who was asked to answer Field 104360
+#104070	Vegetable pieces intake	Current Field determines who was asked to answer Field 104070
+#104370	Watercress intake	Current Field determines who was asked to answer Field 104370
+
+
+```{r ukb_data_vegetables}
+##find vegetables
+v<-"avocado_intake_f104100|broad_bean_intake_f104110|butternut_squash_intake_f104150|beetroot_intake_f104130|broccoli_intake_f104140|cabbagekale_intake_f104160|carrot_intake_f104170|cauliflower_intake_f104180|celery_intake_f104190|courgette_intake_f104200|cucumber_intake_f104210|fresh_tomato_intake_f104340|garlic_intake_f104220|leek_intake_f104230|lettuce_intake_f104240|mushroom_intake_f104250|onion_intake_f104260|parsnip_intake_f104270|pea_intake_f104280|spinach_intake_f104300|sprouts_intake_f104310|sweetcorn_intake_f104320|turnipswede_intake_f104360|watercress_intake_f104370|other_vegetables_intake_f104380|vegetable_consumers|sweet_pepper_intake_f104290|vegetable_pieces_intake_f104070"
+
+vegetables<-names(my_ukb_data)[grepl(v, names(my_ukb_data))]
+d<-my_ukb_data[,names(my_ukb_data)%in%c("eid", vegetables)]%>%
+  lapply(as.numeric) %>%
+  as.data.frame()
+
+#conver na to a large number
+d_check<-d
+d_check[is.na(d_check)] <- 999999
+
+d_subset <- d_check[, apply(d_check, 2, function(col) any(col == 0))] 
+
+names(d_subset)
+ 
+rm(d_check)
+## 
+d_0<-d[,names(d)%in%names(d)[grepl("_0_0|eid", names(d))]]%>%
+  gather(key, value, -eid,-vegetable_consumers_f103990_0_0)
+d_0$value<-ifelse(d_0$vegetable_consumers_f103990_0_0==1&is.na(d_0$value)==TRUE, 0, d_0$value)
+
+d_0<-d_0%>%
+  pivot_wider(names_from = key, values_from = value)%>%
+  select(-vegetable_consumers_f103990_0_0)
+
+#
+d_1<-d[,names(d)%in%names(d)[grepl("_1_0|eid", names(d))]]%>%
+  gather(key, value, -eid,-vegetable_consumers_f103990_1_0)
+d_1$value<-ifelse(d_1$vegetable_consumers_f103990_1_0==1&is.na(d_1$value)==TRUE, 0, d_1$value)
+
+d_1<-d_1%>%
+  pivot_wider(names_from = key, values_from = value)%>%
+  select(-vegetable_consumers_f103990_1_0)
+
+#
+d_2<-d[,names(d)%in%names(d)[grepl("_2_0|eid", names(d))]]%>%
+  gather(key, value, -eid,-vegetable_consumers_f103990_2_0)
+d_2$value<-ifelse(d_2$vegetable_consumers_f103990_2_0==1&is.na(d_2$value)==TRUE, 0, d_2$value)
+
+d_2<-d_2%>%
+  pivot_wider(names_from = key, values_from = value)%>%
+  select(-vegetable_consumers_f103990_2_0)
+
+#
+d_3<-d[,names(d)%in%names(d)[grepl("_3_0|eid", names(d))]]%>%
+  gather(key, value, -eid,-vegetable_consumers_f103990_3_0)
+d_3$value<-ifelse(d_3$vegetable_consumers_f103990_3_0==1&is.na(d_3$value)==TRUE, 0, d_3$value)
+
+d_3<-d_3%>%
+  pivot_wider(names_from = key, values_from = value)%>%
+  select(-vegetable_consumers_f103990_3_0)
+#
+d_4<-d[,names(d)%in%names(d)[grepl("_4_0|eid", names(d))]]%>%
+  gather(key, value, -eid,-vegetable_consumers_f103990_4_0)
+d_4$value<-ifelse(d_4$vegetable_consumers_f103990_4_0==1&is.na(d_4$value)==TRUE, 0, d_4$value)
+
+d_4<-d_4%>%
+  pivot_wider(names_from = key, values_from = value)%>%
+  select(-vegetable_consumers_f103990_4_0)
+
+
+other<-my_ukb_data[,names(my_ukb_data)%in% c("eid",names(my_ukb_data)[grepl("cooked_vegetable_intake|salad_raw_vegetable_intake|pure_fruitvegetable_juice_intake", names(my_ukb_data))])]%>%
+  lapply(as.numeric) %>%
+  as.data.frame()
+
+d_vegetables<-merge(other,merge(d_0, merge(d_1, merge(d_2, merge(d_3, d_4, by="eid"), by="eid"), by="eid"), by="eid"),by="eid")%>%
+  gather(key, value, -eid)%>%
+   mutate(value=case_when( value == 300 ~ 3,
+                           value == 600 ~ 6,
+    value == 444 ~ 0.25,
+    value == 555 ~ 0.5,
+    value == -1 ~ NA_real_,
+    value == -3 ~ NA_real_,
+    value == -10 ~ 0.5,
+    TRUE ~ value))%>%
+  pivot_wider(names_from = key, values_from = value)
+rm(v, d, d_subset, d_0, d_1, d_2, d_3, d_4, other)
+```
+
+
+#fruit_consumers_f104400 19 related feieds
+#104450	Apple intake	Current Field determines who was asked to answer Field 104450
+#104460	Banana intake	Current Field determines who was asked to answer Field 104460
+#104470	Berry intake	Current Field determines who was asked to answer Field 104470
+#104480	Cherry intake	Current Field determines who was asked to answer Field 104480
+#104430	Dried fruit intake	Current Field determines who was asked to answer Field 104430
+#104500	Grape intake	Current Field determines who was asked to answer Field 104500
+#104490	Grapefruit intake	Current Field determines who was asked to answer Field 104490
+#104510	Mango intake	Current Field determines who was asked to answer Field 104510
+#104520	Melon intake	Current Field determines who was asked to answer Field 104520
+#104440	Mixed fruit intake	Current Field determines who was asked to answer Field 104440
+#104530	Orange intake	Current Field determines who was asked to answer Field 104530
+#104590	Other fruit intake	Current Field determines who was asked to answer Field 104590
+#104550	Peach/nectarine intake	Current Field determines who was asked to answer Field 104550
+#104560	Pear intake	Current Field determines who was asked to answer Field 104560
+#104570	Pineapple intake	Current Field determines who was asked to answer Field 104570
+#104580	Plum intake	Current Field determines who was asked to answer Field 104580
+#104420	Prune intake	Current Field determines who was asked to answer Field 104420
+#104540	Satsuma intake	Current Field determines who was asked to answer Field 104540
+#104410	Stewed fruit intake	Current Field determines who was asked to answer Field 104410
+
+```{r fruit_consumers_f104400}
+#fruits 
+ft<-"apple_intake_f104450|banana_intake_f104460|berry_intake_f104470|cherry_intake_f104480|dried_fruit_f104430|grapefruit_intake_f104490|melon_intake_f104520|orange_intake_f104530|pear_intake_f104560|plum_intake_f104580|fruit_consumers"
+
+fruits<-names(my_ukb_data)[grepl(ft, names(my_ukb_data))]
+d<-my_ukb_data[,names(my_ukb_data)%in%c("eid", fruits)]%>%
+  lapply(as.numeric) %>%
+  as.data.frame()
+
+## convert na with 999999
+d_check<-d
+d_check[is.na(d_check)] <- 999999
+
+d_subset <- d_check[, apply(d_check, 2, function(col) any(col == 0))] 
+
+names(d_subset)
+
+
+## 
+d_0<-d[,names(d)%in%names(d)[grepl("_0_0|eid", names(d))]]%>%
+  gather(key, value, -eid,-fruit_consumers_f104400_0_0)
+d_0$value<-ifelse(d_0$fruit_consumers_f104400_0_0==1&is.na(d_0$value)==TRUE, 0, d_0$value)
+
+d_0<-d_0%>%
+  pivot_wider(names_from = key, values_from = value)%>%
+  select(-fruit_consumers_f104400_0_0)
+
+#
+d_1<-d[,names(d)%in%names(d)[grepl("_1_0|eid", names(d))]]%>%
+  gather(key, value, -eid,-fruit_consumers_f104400_1_0)
+d_1$value<-ifelse(d_1$fruit_consumers_f104400_1_0==1&is.na(d_1$value)==TRUE, 0, d_1$value)
+
+d_1<-d_1%>%
+  pivot_wider(names_from = key, values_from = value)%>%
+  select(-fruit_consumers_f104400_1_0)
+
+#
+d_2<-d[,names(d)%in%names(d)[grepl("_2_0|eid", names(d))]]%>%
+  gather(key, value, -eid,-fruit_consumers_f104400_2_0)
+d_2$value<-ifelse(d_2$fruit_consumers_f104400_2_0==1&is.na(d_2$value)==TRUE, 0, d_2$value)
+
+d_2<-d_2%>%
+  pivot_wider(names_from = key, values_from = value)%>%
+  select(-fruit_consumers_f104400_2_0)
+
+#
+d_3<-d[,names(d)%in%names(d)[grepl("_3_0|eid", names(d))]]%>%
+  gather(key, value, -eid,-fruit_consumers_f104400_3_0)
+d_3$value<-ifelse(d_3$fruit_consumers_f104400_3_0==1&is.na(d_3$value)==TRUE, 0, d_3$value)
+
+d_3<-d_3%>%
+  pivot_wider(names_from = key, values_from = value)%>%
+  select(-fruit_consumers_f104400_3_0)
+#
+d_4<-d[,names(d)%in%names(d)[grepl("_4_0|eid", names(d))]]%>%
+  gather(key, value, -eid,-fruit_consumers_f104400_4_0)
+d_4$value<-ifelse(d_4$fruit_consumers_f104400_4_0==1&is.na(d_4$value)==TRUE, 0, d_4$value)
+
+d_4<-d_4%>%
+  pivot_wider(names_from = key, values_from = value)%>%
+  select(-fruit_consumers_f104400_4_0)
+
+
+other<-my_ukb_data[,names(my_ukb_data)%in%c("eid", names(my_ukb_data)[grepl("fresh_fruit_intake_f1309|dried_fruit_intake_f1319", names(my_ukb_data))])]%>%
+   lapply(as.numeric) %>%
+  as.data.frame()
+
+d_fruits<-merge(other, merge(d_0, merge(d_1, merge(d_2, merge(d_3, d_4, by="eid"), by="eid"), by="eid"), by="eid"),by="eid")%>%
+  gather(key, value, -eid)%>%
+   mutate(value=case_when( value == 500 ~ 5,
+    value == 100 ~ 1,
+    value == 400 ~ 4,
+     value == 444 ~ 0.25,
+    value == 555 ~ 0.5,
+    value == -1 ~ NA_real_,
+    value == -3 ~ NA_real_,
+    value == -10 ~ 0.5,
+    TRUE ~ value))%>%
+  pivot_wider(names_from = key, values_from = value)
+
+rm(ft, fruits, d_0, d_1, d_2, d_3, d_4, other, d_check, d_subset)
+```
+##yogurticecream_consumers_f102080 #2 related fields
+
+#yogurt_intake_f102090 (dairy)
+#icecream_intake_f102120 (dessert)
+
+
+
+```{r ukb_others}
+#yogurticecream_consumers_f102080
+yg<-my_ukb_data[,names(my_ukb_data)%in% c("eid",names(my_ukb_data)[grepl("yogurt_intake|icecream", names(my_ukb_data))])]%>%
+  lapply(as.numeric) %>%
+  as.data.frame()
+  
+#
+yg$yogurt_intake_f102090_0_0<-ifelse(yg$yogurticecream_consumers_f102080_0_0==1&is.na(yg$yogurt_intake_f102090_0_0), 0, yg$yogurt_intake_f102090_0_0)
+yg$yogurt_intake_f102090_1_0<-ifelse(yg$yogurticecream_consumers_f102080_1_0==1&is.na(yg$yogurt_intake_f102090_1_0), 0, yg$yogurt_intake_f102090_1_0)
+yg$yogurt_intake_f102090_2_0<-ifelse(yg$yogurticecream_consumers_f102080_2_0==1&is.na(yg$yogurt_intake_f102090_2_0), 0, yg$yogurt_intake_f102090_2_0)
+yg$yogurt_intake_f102090_3_0<-ifelse(yg$yogurticecream_consumers_f102080_3_0==1&is.na(yg$yogurt_intake_f102090_3_0), 0, yg$yogurt_intake_f102090_3_0)
+yg$yogurt_intake_f102090_4_0<-ifelse(yg$yogurticecream_consumers_f102080_4_0==1&is.na(yg$yogurt_intake_f102090_4_0), 0, yg$yogurt_intake_f102090_4_0)
+
+yg$icecream_intake_f102120_0_0<-ifelse(yg$yogurticecream_consumers_f102080_0_0==1&is.na(yg$icecream_intake_f102120_0_0), 0,yg$icecream_intake_f102120_0_0)
+yg$icecream_intake_f102120_1_0<-ifelse(yg$yogurticecream_consumers_f102080_1_0==1&is.na(yg$icecream_intake_f102120_1_0), 0,yg$icecream_intake_f102120_1_0)
+yg$icecream_intake_f102120_2_0<-ifelse(yg$yogurticecream_consumers_f102080_2_0==1&is.na(yg$icecream_intake_f102120_2_0), 0,yg$icecream_intake_f102120_2_0)
+yg$icecream_intake_f102120_3_0<-ifelse(yg$yogurticecream_consumers_f102080_3_0==1&is.na(yg$icecream_intake_f102120_3_0), 0,yg$icecream_intake_f102120_3_0)
+yg$icecream_intake_f102120_4_0<-ifelse(yg$yogurticecream_consumers_f102080_4_0==1&is.na(yg$icecream_intake_f102120_4_0), 0,yg$icecream_intake_f102120_4_0)
+
+
+yg<-yg%>%
+  gather(key, value, -eid)%>%
+    filter(!key %in% c("yogurticecream_consumers_f102080_0_0","yogurticecream_consumers_f102080_1_0","yogurticecream_consumers_f102080_2_0","yogurticecream_consumers_f102080_3_0","yogurticecream_consumers_f102080_4_0"))%>%
+  mutate(value=case_when( value == 300 ~ 3,
+    value == 555 ~ 0.5,
+    TRUE ~ value))%>%
+  pivot_wider(names_from = key, values_from = value)
+```
+
+#meat_consumers_f103000 #10 related feild
+
+#beef_intake_f1369 
+#pork_intake_f1389 
+#lamb_intake_f103040 (meat)
+#liver_intake_f103090 (meat)
+#sausage_intake_f103010 (meat)
+```{r meat_consumers_f103000}
+##meat_consumers_f103000
+meat<-my_ukb_data[,names(my_ukb_data)%in% c("eid",names(my_ukb_data)[grepl("lamb_intak|liver_intake|sausage_intake|meat_consumers|pork_intake_f103020|beef_intake_f103020", names(my_ukb_data))])]%>%
+  lapply(as.numeric) %>%
+  as.data.frame()
+
+#
+meat_0<-meat[,names(meat)%in%c("eid", names(meat)[grepl("_0_0", names(meat))])]%>%
+  gather(key, value, -eid, -meat_consumers_f103000_0_0)
+
+meat_0$value<-ifelse(meat_0$meat_consumers_f103000_0_0==1&is.na(meat_0$value), 0, meat_0$value)
+meat_0<-meat_0%>%
+  pivot_wider(names_from = key, values_from = value)%>%
+  select(-meat_consumers_f103000_0_0)
+
+#
+meat_1<-meat[,names(meat)%in%c("eid", names(meat)[grepl("_1_0", names(meat))])]%>%
+  gather(key, value, -eid, -meat_consumers_f103000_1_0)
+
+meat_1$value<-ifelse(meat_1$meat_consumers_f103000_1_0==1&is.na(meat_1$value), 0, meat_1$value)
+meat_1<-meat_1%>%
+  pivot_wider(names_from = key, values_from = value)%>%
+  select(-meat_consumers_f103000_1_0)
+
+#
+meat_2<-meat[,names(meat)%in%c("eid", names(meat)[grepl("_2_0", names(meat))])]%>%
+  gather(key, value, -eid, -meat_consumers_f103000_2_0)
+
+meat_2$value<-ifelse(meat_2$meat_consumers_f103000_2_0==1&is.na(meat_2$value), 0, meat_2$value)
+meat_2<-meat_2%>%
+  pivot_wider(names_from = key, values_from = value)%>%
+  select(-meat_consumers_f103000_2_0)
+
+#
+meat_3<-meat[,names(meat)%in%c("eid", names(meat)[grepl("_3_0", names(meat))])]%>%
+  gather(key, value, -eid, -meat_consumers_f103000_3_0)
+
+meat_3$value<-ifelse(meat_3$meat_consumers_f103000_3_0==1&is.na(meat_3$value), 0, meat_3$value)
+meat_3<-meat_3%>%
+  pivot_wider(names_from = key, values_from = value)%>%
+  select(-meat_consumers_f103000_3_0)
+
+#
+meat_4<-meat[,names(meat)%in%c("eid", names(meat)[grepl("_4_0", names(meat))])]%>%
+  gather(key, value, -eid, -meat_consumers_f103000_4_0)
+
+meat_4$value<-ifelse(meat_4$meat_consumers_f103000_4_0==1&is.na(meat_4$value), 0, meat_4$value)
+meat_4<-meat_4%>%
+  pivot_wider(names_from = key, values_from = value)%>%
+  select(-meat_consumers_f103000_4_0)
+
+
+other<-my_ukb_data[,names(my_ukb_data)%in%c("eid", names(my_ukb_data)[grepl("beef_intake_f1369|pork_intake_f1389", names(my_ukb_data))])]%>%
+  lapply(as.numeric) %>%
+  as.data.frame() ##diet
+
+  
+meat_all<-merge(other, merge(meat_0, merge(meat_1, merge(meat_2,merge(meat_3, meat_4, by="eid"), by="eid"), by="eid"), by="eid"), by="eid")%>%
+  gather(key, value, -eid)%>%
+   mutate(value=case_when( value == 500 ~ 5,
+    value == 555 ~ 0.5,
+    value == -1 ~ NA_real_,
+    value == -3 ~ NA_real_,
+    TRUE ~ value))%>%
+  pivot_wider(names_from = key, values_from = value)
+
+rm(meat, meat_0, meat_1, meat_2, meat_3, meat_4, other)
+```
+
+#blue_cheese_intake_f102840
+#goats_cheese_intake_f102900 (dairy)
+```{r cheese}
+#cheese_consumers_f102800_0_0
+ch<-my_ukb_data[,names(my_ukb_data)%in% c("eid",names(my_ukb_data)[grepl("^blue_cheese|^goats_cheese|cheese_consumers", names(my_ukb_data))])]
+cheese<-names(my_ukb_data)[grepl("cheese", names(my_ukb_data))]
+## convert na with 999999
+ch_check<-ch
+ch_check[is.na(ch_check)] <- 999999
+ch_subset <- ch_check[, apply(ch_check, 2, function(col) any(col == 0))] 
+names(ch_subset)
+
+##exclude cheese_intake_f1408
+ch<-ch%>%
+  lapply(as.numeric) %>%
+  as.data.frame()
+
+
+## 
+ch_0<-ch[,names(ch)%in%names(ch)[grepl("_0_0|eid", names(ch))]]%>%
+  gather(key, value, -eid,-cheese_consumers_f102800_0_0)
+ch_0$value<-ifelse(ch_0$cheese_consumers_f102800_0_0==1&is.na(ch_0$value)==TRUE, 0, ch_0$value)
+
+ch_0<-ch_0%>%
+  pivot_wider(names_from = key, values_from = value)%>%
+  select(-cheese_consumers_f102800_0_0)
+
+#
+ch_1<-ch[,names(ch)%in%names(ch)[grepl("_1_0|eid", names(ch))]]%>%
+  gather(key, value, -eid,-cheese_consumers_f102800_1_0)
+ch_1$value<-ifelse(ch_1$cheese_consumers_f102800_1_0==1&is.na(ch_1$value)==TRUE, 0, ch_1$value)
+
+ch_1<-ch_1%>%
+  pivot_wider(names_from = key, values_from = value)%>%
+  select(-cheese_consumers_f102800_1_0)
+
+#
+ch_2<-ch[,names(ch)%in%names(ch)[grepl("_2_0|eid", names(ch))]]%>%
+  gather(key, value, -eid,-cheese_consumers_f102800_2_0)
+ch_2$value<-ifelse(ch_2$cheese_consumers_f102800_2_0==1&is.na(ch_2$value)==TRUE, 0, ch_2$value)
+
+ch_2<-ch_2%>%
+  pivot_wider(names_from = key, values_from = value)%>%
+  select(-cheese_consumers_f102800_2_0)
+
+#
+ch_3<-ch[,names(ch)%in%names(ch)[grepl("_3_0|eid", names(ch))]]%>%
+  gather(key, value, -eid,-cheese_consumers_f102800_3_0)
+ch_3$value<-ifelse(ch_3$cheese_consumers_f102800_3_0==1&is.na(ch_3$value)==TRUE, 0, ch_3$value)
+
+ch_3<-ch_3%>%
+  pivot_wider(names_from = key, values_from = value)%>%
+  select(-cheese_consumers_f102800_3_0)
+#
+ch_4<-ch[,names(ch)%in%names(ch)[grepl("_4_0|eid", names(ch))]]%>%
+  gather(key, value, -eid,-cheese_consumers_f102800_4_0)
+ch_4$value<-ifelse(ch_4$cheese_consumers_f102800_4_0==1&is.na(ch_4$value)==TRUE, 0, ch_4$value)
+
+ch_4<-ch_4%>%
+  pivot_wider(names_from = key, values_from = value)%>%
+  select(-cheese_consumers_f102800_4_0)
+
+ch_cheese<-merge(ch_0, merge(ch_1, merge(ch_2, merge(ch_3, ch_4, by="eid"), by="eid"), by="eid"), by="eid")%>%
+  gather(key, value, -eid)%>%
+   mutate(value=case_when( value == 300 ~ 3,
+    value == 555 ~ 0.5,
+    TRUE ~ value))%>%
+  pivot_wider(names_from = key, values_from = value)
+
+
+rm(ch, cheese, ch_check, ch_0, ch_1, ch_2, ch_3, ch_4)
+```
+
+
+#white_pasta_intake_f102710 (grain-based)
+#white_rice_intake_f102730 (grain)
+
+```{r starchy_food_consumers_f102700}
+#starchy_food_consumers_f102700
+
+starchy<-my_ukb_data[,names(my_ukb_data)%in% c("eid",names(my_ukb_data)[grepl("^white_pasta|^white_rice", names(my_ukb_data))])]
+
+## convert na with 999999
+starchy_check<-starchy
+starchy_check[is.na(starchy_check)] <- 999999
+starchy_subset <- starchy_check[, apply(starchy_check, 2, function(col) any(col == 0))] 
+names(starchy_subset)
+# no retains 0
+
+starchy<-my_ukb_data[,names(my_ukb_data)%in% c("eid",names(my_ukb_data)[grepl("white_pasta|white_rice|starchy_food", names(my_ukb_data))])]%>%
+  lapply(as.numeric) %>%
+  as.data.frame()
+
+## 
+starchy_0<-starchy[,names(starchy)%in%names(starchy)[grepl("_0_0|eid", names(starchy))]]%>%
+  gather(key, value, -eid,-starchy_food_consumers_f102700_0_0)
+starchy_0$value<-ifelse(starchy_0$starchy_food_consumers_f102700_0_0==1&is.na(starchy_0$value)==TRUE, 0, starchy_0$value)
+
+starchy_0<-starchy_0%>%
+  pivot_wider(names_from = key, values_from = value)%>%
+  select(-starchy_food_consumers_f102700_0_0)
+
+#
+starchy_1<-starchy[,names(starchy)%in%names(starchy)[grepl("_1_0|eid", names(starchy))]]%>%
+  gather(key, value, -eid,-starchy_food_consumers_f102700_1_0)
+starchy_1$value<-ifelse(starchy_1$starchy_food_consumers_f102700_1_0==1&is.na(starchy_1$value)==TRUE, 0, starchy_1$value)
+
+starchy_1<-starchy_1%>%
+  pivot_wider(names_from = key, values_from = value)%>%
+  select(-starchy_food_consumers_f102700_1_0)
+
+#
+starchy_2<-starchy[,names(starchy)%in%names(starchy)[grepl("_2_0|eid", names(starchy))]]%>%
+  gather(key, value, -eid,-starchy_food_consumers_f102700_2_0)
+starchy_2$value<-ifelse(starchy_2$starchy_food_consumers_f102700_2_0==1&is.na(starchy_2$value)==TRUE, 0, starchy_2$value)
+
+starchy_2<-starchy_2%>%
+  pivot_wider(names_from = key, values_from = value)%>%
+  select(-starchy_food_consumers_f102700_2_0)
+
+#
+starchy_3<-starchy[,names(starchy)%in%names(starchy)[grepl("_3_0|eid", names(starchy))]]%>%
+  gather(key, value, -eid,-starchy_food_consumers_f102700_3_0)
+starchy_3$value<-ifelse(starchy_3$starchy_food_consumers_f102700_3_0==1&is.na(starchy_3$value)==TRUE, 0, starchy_3$value)
+
+starchy_3<-starchy_3%>%
+  pivot_wider(names_from = key, values_from = value)%>%
+  select(-starchy_food_consumers_f102700_3_0)
+#
+starchy_4<-starchy[,names(starchy)%in%names(starchy)[grepl("_4_0|eid", names(starchy))]]%>%
+  gather(key, value, -eid,-starchy_food_consumers_f102700_4_0)
+starchy_4$value<-ifelse(starchy_4$starchy_food_consumers_f102700_4_0==1&is.na(starchy_4$value)==TRUE, 0, starchy_4$value)
+
+starchy_4<-starchy_4%>%
+  pivot_wider(names_from = key, values_from = value)%>%
+  select(-starchy_food_consumers_f102700_4_0)
+
+starchy_all<-merge(starchy_0, merge(starchy_1, merge(starchy_2, merge(starchy_3, starchy_4, by="eid"), by="eid"), by="eid"), by="eid")%>%
+  gather(key, value, -eid)%>%
+   mutate(value=case_when( value == 200 ~ 2,
+    value == 555 ~ 0.5,
+    TRUE ~ value))%>%
+  pivot_wider(names_from = key, values_from = value)
+
+rm(starchy, starchy_check, starchy_0, starchy_1, starchy_2, starchy_3, starchy_4)
+```
+#milk_intake_f100520 (dairy)
+#porridge_intake_f100770 (grain-based)
+#bread_intake_f1438 (grain)
+#boiledbaked_potatoes_intake_f104030 (starchy vegetable)
+#pizza_intake_f102000 (prepared food)
+#beercider_intake_f100710
+#coffee_intake_f1498 (beverage)
+#filtered_coffee_intake_f100270 (beverage)
+#green_tea_intake_f100420 (beverage)
+#herbal_tea_intake_f100430 (beverage)
+#instant_coffee_intake_f100250 (beverage)
+#intake_of_artificial_sweetener_added_to_coffee_f100380
+#intake_of_artificial_sweetener_added_to_tea_f100500
+#intake_of_sugar_added_to_coffee_f100370
+#intake_of_sugar_added_to_tea_f100490
+#red_wine_intake_f100590 (beverage)
+#salt_added_to_food_f1478
+#spirits_intake_f100730 (alcoholic beverage)
+#tea_intake_f1488 (beverage)
+
+###################################
+#cake_intake_f102190 (dessert)
+#cheesecake_intake_f102220 (dessert)
+```{r dessert_consumers_f102130_0_0}
+#dessert_consumers_f102130_0_0
+
+dessert <- my_ukb_data[,names(my_ukb_data)%in%c("eid",names(my_ukb_data)[grepl("^cake_intake|^cheesecake_intake|dessert_consumers", names(my_ukb_data))])]
+
+## convert na with 999999
+dessert_check<-dessert
+dessert_check[is.na(dessert_check)] <- 999999
+dessert_subset <- dessert_check[, apply(dessert_check, 2, function(col) any(col == 0))] 
+names(dessert_subset)
+
+## 
+rm(dessert_check)
+
+dessert<-dessert%>%
+  lapply(as.numeric) %>%
+  as.data.frame()
+
+## 
+dessert_0<-dessert[,names(dessert)%in%names(dessert)[grepl("_0_0|eid", names(dessert))]]%>%
+  gather(key, value, -eid,-dessert_consumers_f102130_0_0)
+dessert_0$value<-ifelse(dessert_0$dessert_consumers_f102130_0_0==1&is.na(dessert_0$value)==TRUE, 0, dessert_0$value)
+
+dessert_0<-dessert_0%>%
+  pivot_wider(names_from = key, values_from = value)%>%
+  select(-dessert_consumers_f102130_0_0)
+
+#
+dessert_1<-dessert[,names(dessert)%in%names(dessert)[grepl("_1_0|eid", names(dessert))]]%>%
+  gather(key, value, -eid,-dessert_consumers_f102130_1_0)
+dessert_1$value<-ifelse(dessert_1$dessert_consumers_f102130_1_0==1&is.na(dessert_1$value)==TRUE, 0, dessert_1$value)
+
+dessert_1<-dessert_1%>%
+  pivot_wider(names_from = key, values_from = value)%>%
+  select(-dessert_consumers_f102130_1_0)
+
+#
+dessert_2<-dessert[,names(dessert)%in%names(dessert)[grepl("_2_0|eid", names(dessert))]]%>%
+  gather(key, value, -eid,-dessert_consumers_f102130_2_0)
+dessert_2$value<-ifelse(dessert_2$dessert_consumers_f102130_2_0==1&is.na(dessert_2$value)==TRUE, 0, dessert_2$value)
+
+dessert_2<-dessert_2%>%
+  pivot_wider(names_from = key, values_from = value)%>%
+  select(-dessert_consumers_f102130_2_0)
+
+#
+dessert_3<-dessert[,names(dessert)%in%names(dessert)[grepl("_3_0|eid", names(dessert))]]%>%
+  gather(key, value, -eid,-dessert_consumers_f102130_3_0)
+dessert_3$value<-ifelse(dessert_3$dessert_consumers_f102130_3_0==1&is.na(dessert_3$value)==TRUE, 0, dessert_3$value)
+
+dessert_3<-dessert_3%>%
+  pivot_wider(names_from = key, values_from = value)%>%
+  select(-dessert_consumers_f102130_3_0)
+#
+dessert_4<-dessert[,names(dessert)%in%names(dessert)[grepl("_4_0|eid", names(dessert))]]%>%
+  gather(key, value, -eid,-dessert_consumers_f102130_4_0)
+dessert_4$value<-ifelse(dessert_4$dessert_consumers_f102130_4_0==1&is.na(dessert_4$value)==TRUE, 0, dessert_4$value)
+
+dessert_4<-dessert_4%>%
+  pivot_wider(names_from = key, values_from = value)%>%
+  select(-dessert_consumers_f102130_4_0)
+
+dessert_all<-merge(dessert_0, merge(dessert_1, merge(dessert_2, merge(dessert_3, dessert_4, by="eid"), by="eid"), by="eid"), by="eid")%>%
+  gather(key, value, -eid)%>%
+  mutate(value=case_when( value == 300 ~ 3,
+    value == 555 ~ 0.5,
+    TRUE ~ value))%>%
+  pivot_wider(names_from = key, values_from = value)
+
+rm(dessert,dessert_subset, dessert_0, dessert_1,dessert_2,dessert_3,dessert_4)
+```
+#sweet_snack_consumers_f102250 13 related field
+
+#sweet_biscuits_intake_f102360 (snack)
+#dark_chocolate_intake_f102290
+```{r, sweet_snack_consumers_f102250_1_0}
+#"sweet_snack_consumers_f102250_1_0"
+
+sweet_snack <- my_ukb_data[,names(my_ukb_data)%in%c("eid",names(my_ukb_data)[grepl("^sweet_biscuits|^dark_chocolate|sweet_snack", names(my_ukb_data))])]
+
+## convert na with 999999
+sweet_snack_check<-sweet_snack
+sweet_snack_check[is.na(sweet_snack_check)] <- 999999
+sweet_snack_subset <- sweet_snack_check[, apply(sweet_snack_check, 2, function(col) any(col == 0))] 
+names(sweet_snack_subset)
+
+## 
+rm(sweet_snack_check)
+
+sweet_snack<-sweet_snack%>%
+  lapply(as.numeric) %>%
+  as.data.frame()
+
+## 
+sweet_snack_0<-sweet_snack[,names(sweet_snack)%in%names(sweet_snack)[grepl("_0_0|eid", names(sweet_snack))]]%>%
+  gather(key, value, -eid,-sweet_snack_consumers_f102250_0_0)
+sweet_snack_0$value<-ifelse(sweet_snack_0$sweet_snack_consumers_f102250_0_0==1&is.na(sweet_snack_0$value)==TRUE, 0, sweet_snack_0$value)
+
+sweet_snack_0<-sweet_snack_0%>%
+  pivot_wider(names_from = key, values_from = value)%>%
+  select(-sweet_snack_consumers_f102250_0_0)
+
+#
+sweet_snack_1<-sweet_snack[,names(sweet_snack)%in%names(sweet_snack)[grepl("_1_0|eid", names(sweet_snack))]]%>%
+  gather(key, value, -eid,-sweet_snack_consumers_f102250_1_0)
+sweet_snack_1$value<-ifelse(sweet_snack_1$sweet_snack_consumers_f102250_1_0==1&is.na(sweet_snack_1$value)==TRUE, 0, sweet_snack_1$value)
+
+sweet_snack_1<-sweet_snack_1%>%
+  pivot_wider(names_from = key, values_from = value)%>%
+  select(-sweet_snack_consumers_f102250_1_0)
+
+#
+sweet_snack_2<-sweet_snack[,names(sweet_snack)%in%names(sweet_snack)[grepl("_2_0|eid", names(sweet_snack))]]%>%
+  gather(key, value, -eid,-sweet_snack_consumers_f102250_2_0)
+sweet_snack_2$value<-ifelse(sweet_snack_2$sweet_snack_consumers_f102250_2_0==1&is.na(sweet_snack_2$value)==TRUE, 0, sweet_snack_2$value)
+
+sweet_snack_2<-sweet_snack_2%>%
+  pivot_wider(names_from = key, values_from = value)%>%
+  select(-sweet_snack_consumers_f102250_2_0)
+
+#
+sweet_snack_3<-sweet_snack[,names(sweet_snack)%in%names(sweet_snack)[grepl("_3_0|eid", names(sweet_snack))]]%>%
+  gather(key, value, -eid,-sweet_snack_consumers_f102250_3_0)
+sweet_snack_3$value<-ifelse(sweet_snack_3$sweet_snack_consumers_f102250_3_0==1&is.na(sweet_snack_3$value)==TRUE, 0, sweet_snack_3$value)
+
+sweet_snack_3<-sweet_snack_3%>%
+  pivot_wider(names_from = key, values_from = value)%>%
+  select(-sweet_snack_consumers_f102250_3_0)
+#
+sweet_snack_4<-sweet_snack[,names(sweet_snack)%in%names(sweet_snack)[grepl("_4_0|eid", names(sweet_snack))]]%>%
+  gather(key, value, -eid,-sweet_snack_consumers_f102250_4_0)
+sweet_snack_4$value<-ifelse(sweet_snack_4$sweet_snack_consumers_f102250_4_0==1&is.na(sweet_snack_4$value)==TRUE, 0, sweet_snack_4$value)
+
+sweet_snack_4<-sweet_snack_4%>%
+  pivot_wider(names_from = key, values_from = value)%>%
+  select(-sweet_snack_consumers_f102250_4_0)
+
+sweet_snack_all<-merge(sweet_snack_0, merge(sweet_snack_1, merge(sweet_snack_2, merge(sweet_snack_3, sweet_snack_4, by="eid"), by="eid"), by="eid"), by="eid")%>%
+  gather(key, value, -eid)%>%
+  mutate(value=case_when( value == 500 ~ 5,
+    value == 555 ~ 0.5,
+    value== 444 ~ 0.25,
+    TRUE ~ value))%>%
+  pivot_wider(names_from = key, values_from = value)
+
+
+rm(sweet_snack, sweet_snack_subset, sweet_snack_0,sweet_snack_1,sweet_snack_2,sweet_snack_3,sweet_snack_4)
+```
+
+
+
+#savoury_biscuits_intake_f102470 (snack) with 10 related fields
+#savoury_biscuits_intake_f102470_3_0
+#salted_nuts_intake_f102430
+#salted_peanuts_intake_f102410
+
+```{r savoury_snack_consumers_f102400}
+#savoury_snack_consumers_f102400_2_0
+savoury<-my_ukb_data[,names(my_ukb_data)%in%c("eid",names(my_ukb_data)[grepl("^savoury_snack|^savoury_biscuits|^salted_nuts|^salted_peanuts", names(my_ukb_data))])]
+##check if alraey retains 0
+## convert na with 999999
+savoury_check<-savoury
+savoury_check[is.na(savoury_check)] <- 999999
+savoury_subset <- savoury_check[, apply(savoury_check, 2, function(col) any(col == 0))] 
+names(savoury_subset)
+
+## 
+rm(savoury_check)
+
+savoury<-savoury%>%
+  lapply(as.numeric) %>%
+  as.data.frame()
+
+## 
+savoury_0<-savoury[,names(savoury)%in%names(savoury)[grepl("_0_0|eid", names(savoury))]]%>%
+  gather(key, value, -eid,-savoury_snack_consumers_f102400_0_0)
+savoury_0$value<-ifelse(savoury_0$savoury_snack_consumers_f102400_0_0==1&is.na(savoury_0$value)==TRUE, 0, savoury_0$value)
+
+savoury_0<-savoury_0%>%
+  pivot_wider(names_from = key, values_from = value)%>%
+  select(-savoury_snack_consumers_f102400_0_0)
+
+#
+savoury_1<-savoury[,names(savoury)%in%names(savoury)[grepl("_1_0|eid", names(savoury))]]%>%
+  gather(key, value, -eid,-savoury_snack_consumers_f102400_1_0)
+savoury_1$value<-ifelse(savoury_1$savoury_snack_consumers_f102400_1_0==1&is.na(savoury_1$value)==TRUE, 0, savoury_1$value)
+
+savoury_1<-savoury_1%>%
+  pivot_wider(names_from = key, values_from = value)%>%
+  select(-savoury_snack_consumers_f102400_1_0)
+
+#
+savoury_2<-savoury[,names(savoury)%in%names(savoury)[grepl("_2_0|eid", names(savoury))]]%>%
+  gather(key, value, -eid,-savoury_snack_consumers_f102400_2_0)
+savoury_2$value<-ifelse(savoury_2$savoury_snack_consumers_f102400_2_0==1&is.na(savoury_2$value)==TRUE, 0, savoury_2$value)
+
+savoury_2<-savoury_2%>%
+  pivot_wider(names_from = key, values_from = value)%>%
+  select(-savoury_snack_consumers_f102400_2_0)
+
+#
+savoury_3<-savoury[,names(savoury)%in%names(savoury)[grepl("_3_0|eid", names(savoury))]]%>%
+  gather(key, value, -eid,-savoury_snack_consumers_f102400_3_0)
+savoury_3$value<-ifelse(savoury_3$savoury_snack_consumers_f102400_3_0==1&is.na(savoury_3$value)==TRUE, 0, savoury_3$value)
+
+savoury_3<-savoury_3%>%
+  pivot_wider(names_from = key, values_from = value)%>%
+  select(-savoury_snack_consumers_f102400_3_0)
+#
+savoury_4<-savoury[,names(savoury)%in%names(savoury)[grepl("_4_0|eid", names(savoury))]]%>%
+  gather(key, value, -eid,-savoury_snack_consumers_f102400_4_0)
+savoury_4$value<-ifelse(savoury_4$savoury_snack_consumers_f102400_4_0==1&is.na(savoury_4$value)==TRUE, 0, savoury_4$value)
+
+savoury_4<-savoury_4%>%
+  pivot_wider(names_from = key, values_from = value)%>%
+  select(-savoury_snack_consumers_f102400_4_0)
+
+savoury_all<-merge(savoury_0, merge(savoury_1, merge(savoury_2, merge(savoury_3, savoury_4, by="eid"), by="eid"), by="eid"), by="eid")%>%
+  gather(key, value, -eid)%>%
+  mutate(value=case_when( value == 300 ~ 3,
+    value == 555 ~ 0.5,
+    TRUE ~ value))%>%
+  pivot_wider(names_from = key, values_from = value)
+
+rm(savoury, savoury_subset,savoury_0,savoury_1, savoury_2, savoury_3, savoury_4)
+```
+# 3 filed related:102540	Canned soup intake	Current Field determines who was asked to answer Field 102540
+#102620	Homemade soup intake	Current Field determines who was asked to answer Field 102620
+#102530	Powdered/instant soup intake	Current Field determines who was asked to answer Field 102530
+## not tested
+```{r soup_consumers_f102520}
+#soup_consumers_f102520
+
+```
+#lobstercrab_intake_f103210 (seafood)
+#tinned_tuna_intake_f103150 (fish)
+#white_fish_intake_f103190
+#shellfish_intake_f103220 (seafood)
+
+
+##re-do bread_intake_f1438 with subjects eat white-bread
+```{r, bread_intake_f1438}
+bread_intake_f1438<-my_ukb_data[, names(my_ukb_data)%in%c("eid", names(my_ukb_data)[grepl("bread_intake_f1438",names(my_ukb_data))])]
+rm(my_ukb_data)
+
+bread_type_f1448<-my_ukb_data2[, names(my_ukb_data2)%in%c("eid", names(my_ukb_data2)[grepl("bread_type_f1448",names(my_ukb_data2))])]
+rm(my_ukb_data2)
+
+
+
+bread_intake_f1438_0<-bread_intake_f1438%>%
+  select(eid, bread_intake_f1438_0_0)%>%
+  filter(eid%in%subset(bread_type_f1448, bread_type_f1448_0_0==1)$eid)
+
+bread_intake_f1438_1<-bread_intake_f1438%>%
+  select(eid, bread_intake_f1438_1_0)%>%
+  filter(eid%in%subset(bread_type_f1448, bread_type_f1448_1_0==1)$eid)
+
+bread_intake_f1438_2<-bread_intake_f1438%>%
+  select(eid, bread_intake_f1438_2_0)%>%
+  filter(eid%in%subset(bread_type_f1448, bread_type_f1448_2_0==1)$eid)
+
+bread_intake_f1438_3<-bread_intake_f1438%>%
+  select(eid, bread_intake_f1438_3_0)%>%
+  filter(eid%in%subset(bread_type_f1448, bread_type_f1448_3_0==1)$eid)
+
+bread_intake_white<-merge(bread_intake_f1438_0, merge(bread_intake_f1438_1, merge(bread_intake_f1438_2, bread_intake_f1438_3, by="eid", all=T), by="eid", all=T), by="eid", all=T)%>%
+  gather(key, value, -eid)%>%
+  mutate(value=case_when( value == -3 ~ NA_real_,
+    value == -1 ~ NA_real_,
+    TRUE ~ value))%>%
+  group_by(eid)%>%
+  summarise(bread_intake_white=mean(value, na.rm = TRUE))
+
+write.csv(bread_intake_white, "/media/cailu/Expansion1/ukb/bfilemaf01/variants_generegionmaf0.1/FoodsIntakers20241028/bread_intake_white.csv", row.names=FALSE)
+```
+
+
+```{r merge convert data}
+dat_converted<-merge(d_vegetables, merge(d_fruits, merge(yg, merge(meat_all, merge(ch_cheese, merge(starchy_all, merge(dessert_all, merge(sweet_snack_all, savoury_all, by="eid"), by="eid"), by="eid"), by="eid"), by="eid"), by="eid"), by="eid"), by="eid")
+
+rm(d_vegetables,d_fruits,yg, meat_all, ch_cheese, starchy_all, dessert_all, sweet_snack_all, savoury_all)
+
+write.csv(dat_converted, "data_NA_converted.csv", row.names = F)
+```
+
+```{r ukb_data}
+
+my_ukb_data_unconvert<-my_ukb_data[, c("eid", names(my_ukb_data)[!names(my_ukb_data)%in%names(dat_converted)])]
+
+temp<-merge(dat_converted,my_ukb_data_unconvert, by="eid")%>%
+  lapply(as.numeric) %>%
+  as.data.frame()
+##clean data
+my_ukb_data_2a<-temp[, 1:315] %>%
+  gather(key, value, -eid)%>%
+  mutate(value=case_when( value == 100 ~ 1,
+                          value == 200 ~ 2,
+                          value == 300 ~ 3,
+                          value == 400 ~ 4,
+                          value == 500 ~ 5,
+                          value == 600 ~ 6,
+    value == 555 ~ 0.5,
+    value == 444 ~ 0.25,
+    value == -10 ~ 0.5,
+    value == 111 ~ NA_real_,
+     value == -1 ~ NA_real_,
+     value == -3 ~ NA_real_,
+    TRUE ~ value))
+
+my_ukb_data_2a$key <-substr(my_ukb_data_2a$key, 1, nchar(my_ukb_data_2a$key) - 4)
+
+my_ukb_data_avga<-my_ukb_data_2a%>%
+  group_by(eid, key)%>%
+  summarise(avg=mean(value,na.rm = TRUE))%>%
+  pivot_wider(names_from = key, values_from = avg)
+write.csv(my_ukb_data_avga, "my_ukb_data_avga.csv", row.names = F)
+rm(my_ukb_data_2a, my_ukb_data_avga)
+
+my_ukb_data_2b<-temp[,c(1,316:615)] %>%
+  gather(key, value, -eid)%>%
+  mutate(value=case_when( value == 100 ~ 1,
+                          value == 200 ~ 2,
+                          value == 300 ~ 3,
+                          value == 400 ~ 4,
+                          value == 500 ~ 5,
+                          value == 600 ~ 6,
+    value == 555 ~ 0.5,
+    value == 444 ~ 0.25,
+    value == -10 ~ 0.5,
+    value == 111 ~ NA_real_,
+     value == -1 ~ NA_real_,
+     value == -3 ~ NA_real_,
+    TRUE ~ value))
+
+
+my_ukb_data_2b$key <-substr(my_ukb_data_2b$key, 1, nchar(my_ukb_data_2b$key) - 4)
+
+my_ukb_data_avgb<-my_ukb_data_2b%>%
+  group_by(eid, key)%>%
+  summarise(avg=mean(value,na.rm = TRUE))%>%
+  pivot_wider(names_from = key, values_from = avg)
+write.csv(my_ukb_data_avgb, "my_ukb_data_avgb.csv", row.names = F)
+rm(my_ukb_data_2b, my_ukb_data_avgb)
+
+my_ukb_data_2c<-temp[, c(1,616:915)] %>%
+  gather(key, value, -eid)%>%
+  mutate(value=case_when( value == 100 ~ 1,
+                          value == 200 ~ 2,
+                          value == 300 ~ 3,
+                          value == 400 ~ 4,
+                          value == 500 ~ 5,
+                          value == 600 ~ 6,
+    value == 555 ~ 0.5,
+    value == 444 ~ 0.25,
+    value == -10 ~ 0.5,
+    value == 111 ~ NA_real_,
+     value == -1 ~ NA_real_,
+     value == -3 ~ NA_real_,
+    TRUE ~ value))
+my_ukb_data_2c$key <-substr(my_ukb_data_2c$key, 1, nchar(my_ukb_data_2c$key) - 4)
+
+my_ukb_data_avgc<-my_ukb_data_2c%>%
+  group_by(eid, key)%>%
+  summarise(avg=mean(value,na.rm = TRUE))%>%
+  pivot_wider(names_from = key, values_from = avg)
+write.csv(my_ukb_data_avgc, "my_ukb_data_avgc.csv", row.names = F)
+rm(my_ukb_data_2c, my_ukb_data_avgc)
+
+my_ukb_data_2d<-temp[, c(1,916:1215)] %>%
+  gather(key, value, -eid)%>%
+  mutate(value=case_when( value == 100 ~ 1,
+                          value == 200 ~ 2,
+                          value == 300 ~ 3,
+                          value == 400 ~ 4,
+                          value == 500 ~ 5,
+                          value == 600 ~ 6,
+    value == 555 ~ 0.5,
+    value == 444 ~ 0.25,
+    value == -10 ~ 0.5,
+    value == 111 ~ NA_real_,
+     value == -1 ~ NA_real_,
+     value == -3 ~ NA_real_,
+    TRUE ~ value))
+
+
+my_ukb_data_2d$key <-substr(my_ukb_data_2d$key, 1, nchar(my_ukb_data_2d$key) - 4)
+
+my_ukb_data_avgd<-my_ukb_data_2d%>%
+  group_by(eid, key)%>%
+  summarise(avg=mean(value,na.rm = TRUE))%>%
+  pivot_wider(names_from = key, values_from = avg)
+
+rm(my_ukba_dat2d)
+
+my_ukb_data_avg<-merge(my_ukb_data_avga, merge(my_ukb_data_avgb, merge(my_ukb_data_avgc, my_ukb_data_avgd, by="eid"), by="eid"), by="eid")
+rm(my_ukb_data_avga,my_ukb_data_avgb,my_ukb_data_avgc,my_ukb_data_avgd, temp)  
+##matched traits
+matched_traits <- read_excel("/media/cailu/Seagate Backup Plus Drive/data_20230311/results3_asso/triats_checking.xlsx",sheet = "liking_intake_MATCHED")
+
+my_ukb_data_avg2<-my_ukb_data_avg[names(my_ukb_data_avg)%in% c("eid", matched_traits$`matched food_intake`)]
+  
+
+
+my_ukb_data_averge2<-my_ukb_data_avg2%>%
+  gather(key, value, -eid)%>%
+  group_by(key)%>%
+  summarise(int=mean(value, na.rm = TRUE), SD=sd(value, na.rm = TRUE), N=sum(!is.na(value)))
+
+write.csv(my_ukb_data_averge2, "/media/cailu/Expansion1/ukb/bfilemaf01/variants_generegionmaf0.1/FoodsIntakers20241028/AveragedFoodIntakeSummary20241031.csv", row.names=F)
+write.csv(my_ukb_data_avg2, "/media/cailu/Expansion1/ukb/bfilemaf01/variants_generegionmaf0.1/FoodsIntakers20241028/FoodIntakeAveraged20241031.csv", row.names=F)
+```
+
+
+```{r sort BP}
+my_ukb_data <- ukb_df("ukb49672", path = "/media/cailu/Seagate Backup Plus Drive/data_20230311/UKB/dat_download")
+BP<-names(my_ukb_data)[which(grepl('f4080|f4079', names(my_ukb_data)))]
+BP<-my_ukb_data[,c("eid", BP)]%>%
+  gather(key, value, -eid)
+ 
+  
+BP$key <-substr(BP$key, 1, nchar(BP$key) - 4)
+BP_avg<-BP%>%
+  group_by(eid, key)%>%
+  summarise(avg=mean(value,na.rm = TRUE))%>%
+  pivot_wider(names_from = key, values_from = avg)
+
+BP_avg$PP<-BP_avg$systolic_blood_pressure_automated_reading_f4080-BP_avg$diastolic_blood_pressure_automated_reading_f4079
+sex<-my_ukb_data[,c("eid", "genetic_sex_f22001_0_0","age_at_recruitment_f21022_0_0")]
+pca<-my_ukb_data[,c(1, 4661:4670)]
+colnames(pca)<-c("eid","PC1","PC2" ,"PC3","PC4","PC5","PC6","PC7","PC8","PC9","PC10")
+colnames(sex)<-c("eid", "genetic_sex", "age")
+df<-merge(BP_avg, merge(sex,pca, by="eid"),by="eid")
+
+like<-read.csv("/media/cailu/Seagate Backup Plus Drive/data_20230311/UKB_geno/v2/data_ready_analyses.v2.csv")%>%
+  select(eid, liking_for_bananas_f20609_0_0,liking_for_onions_f20693_0_0)
+dat<-merge(df, like, by="eid")
+
+####
+summary(lm(diastolic_blood_pressure_automated_reading_f4079~liking_for_bananas_f20609_0_0+genetic_sex+age+PC1+PC2+PC3+PC4+PC5+PC6+PC7+PC8+PC9+PC10, data=subset(dat,liking_for_bananas_f20609_0_0>0)))
+
+summary(lm(systolic_blood_pressure_automated_reading_f4080~liking_for_bananas_f20609_0_0+genetic_sex+age+PC1+PC2+PC3+PC4+PC5+PC6+PC7+PC8+PC9+PC10, data=subset(dat,liking_for_bananas_f20609_0_0>0)))
+
+summary(lm(PP~liking_for_bananas_f20609_0_0+genetic_sex+age+PC1+PC2+PC3+PC4+PC5+PC6+PC7+PC8+PC9+PC10, data=subset(dat,liking_for_bananas_f20609_0_0>0)))
+
+####
+summary(lm(diastolic_blood_pressure_automated_reading_f4079~liking_for_onions_f20693_0_0+genetic_sex+age+PC1+PC2+PC3+PC4+PC5+PC6+PC7+PC8+PC9+PC10, data=subset(dat,liking_for_onions_f20693_0_0>0)))
+
+summary(lm(systolic_blood_pressure_automated_reading_f4080~liking_for_onions_f20693_0_0+genetic_sex+age+PC1+PC2+PC3+PC4+PC5+PC6+PC7+PC8+PC9+PC10, data=subset(dat,liking_for_onions_f20693_0_0>0)))
+
+summary(lm(PP~liking_for_onions_f20693_0_0+genetic_sex+age+PC1+PC2+PC3+PC4+PC5+PC6+PC7+PC8+PC9+PC10, data=subset(dat,liking_for_onions_f20693_0_0>0)))
+
+```
+
+
+
+```{r geno}
+
+library(vcfR)
+vcf1 <- read.vcfR("/media/cailu/Seagate Backup Plus Drive1/data_20230311/UKB_geno/bfilemaf0.1/FoodsIntakes/c1foodintake.vcf", verbose = FALSE )
+g1<-t(vcf1@gt)[-1,]
+colnames(g1)<-vcf1@fix[,3]
+
+vcf5 <- read.vcfR("/media/cailu/Seagate Backup Plus Drive1/data_20230311/UKB_geno/bfilemaf0.1/FoodsIntakes/c5foodintake.vcf", verbose = FALSE )
+g2<-t(vcf5@gt)[-1,]
+colnames(g2)<-vcf5@fix[,3]
+
+vcf6 <- read.vcfR("/media/cailu/Seagate Backup Plus Drive1/data_20230311/UKB_geno/bfilemaf0.1/FoodsIntakes/c6foodintake.vcf", verbose = FALSE )
+g3<-t(vcf6@gt)[-1,]
+colnames(g3)<-vcf6@fix[,3]
+
+vcf7 <- read.vcfR("/media/cailu/Seagate Backup Plus Drive1/data_20230311/UKB_geno/bfilemaf0.1/FoodsIntakes/c7foodintake.vcf", verbose = FALSE )
+g4<-t(vcf7@gt)[-1,]
+colnames(g4)<-vcf7@fix[,3]
+
+vcf11 <- read.vcfR("/media/cailu/Seagate Backup Plus Drive1/data_20230311/UKB_geno/bfilemaf0.1/FoodsIntakes/c11foodintake.vcf", verbose = FALSE )
+g5<-t(vcf11@gt)[-1,]
+colnames(g5)<-vcf11@fix[,3]
+
+vcf12 <- read.vcfR("/media/cailu/Seagate Backup Plus Drive1/data_20230311/UKB_geno/bfilemaf0.1/FoodsIntakes/c12foodintake.vcf", verbose = FALSE )
+g6<-t(vcf12@gt)[-1,]
+colnames(g6)<-vcf12@fix[,3]
+
+vcf14 <- read.vcfR("/media/cailu/Seagate Backup Plus Drive1/data_20230311/UKB_geno/bfilemaf0.1/FoodsIntakes/c14foodintake.vcf", verbose = FALSE )
+g7<-t(vcf14@gt)[-1,]
+colnames(g7)<-vcf14@fix[,3]
+
+vcf2 <- read.vcfR("/media/cailu/Seagate Backup Plus Drive1/data_20230311/UKB_geno/bfilemaf0.1/FoodsIntakes/c2foodintake.vcf", verbose = FALSE )
+g8<-t(vcf2@gt)[-1,]
+colnames(g8)<-vcf2@fix[,3]
+
+vcf10 <- read.vcfR("/media/cailu/Seagate Backup Plus Drive1/data_20230311/UKB_geno/bfilemaf0.1/FoodsIntakes/c10foodintake.vcf", verbose = FALSE )
+g9<-data.frame(t(vcf10@gt)[-1,])
+colnames(g9)<-vcf10@fix[,3]
+
+vcf3 <- read.vcfR("/media/cailu/Seagate Backup Plus Drive1/data_20230311/UKB_geno/bfilemaf0.1/FoodsIntakes/c3foodintake.vcf", verbose = FALSE )
+g10<-t(vcf3@gt)[-1,]
+colnames(g10)<-vcf3@fix[,3]
+
+vcf17 <- read.vcfR("/media/cailu/Seagate Backup Plus Drive1/data_20230311/UKB_geno/bfilemaf0.1/FoodsIntakes/c17foodintake.vcf", verbose = FALSE )
+g11<-t(vcf17@gt)[-1,]
+colnames(g11)<-vcf17@fix[,3]
+
+vcf19 <- read.vcfR("/media/cailu/Seagate Backup Plus Drive1/data_20230311/UKB_geno/bfilemaf0.1/FoodsIntakes/c19foodintake.vcf", verbose = FALSE )
+g12<-t(vcf19@gt)[-1,]
+colnames(g12)<-vcf19@fix[,3]
+
+vcf22 <- read.vcfR("/media/cailu/Seagate Backup Plus Drive1/data_20230311/UKB_geno/bfilemaf0.1/FoodsIntakes/c22foodintake.vcf", verbose = FALSE )
+g13<-data.frame(t(vcf22@gt)[-1,])
+colnames(g13)<-vcf22@fix[,3]
+
+vcfX <- read.vcfR("/media/cailu/Seagate Backup Plus Drive1/data_20230311/UKB_geno/bfilemaf0.1/FoodsIntakes/cXfoodintake.vcf", verbose = FALSE )
+g14<-data.frame(t(vcfX@gt)[-1,])
+colnames(g14)<-vcfX@fix[,3]
+
+vcf9 <- read.vcfR("/media/cailu/Seagate Backup Plus Drive1/data_20230311/UKB_geno/bfilemaf0.1/FoodsIntakes/c9foodintake.vcf", verbose = FALSE )
+g15<-t(vcf9@gt)[-1,]
+colnames(g15)<-vcf9@fix[,3]
+
+vcf15 <- read.vcfR("/media/cailu/Seagate Backup Plus Drive1/data_20230311/UKB_geno/bfilemaf0.1/FoodsIntakes/c15foodintake.vcf", verbose = FALSE )
+g16<-t(vcf15@gt)[-1,]
+colnames(g16)<-vcf15@fix[,3]
+
+vcf16 <- read.vcfR("/media/cailu/Seagate Backup Plus Drive1/data_20230311/UKB_geno/bfilemaf0.1/FoodsIntakes/c16foodintake.vcf", verbose = FALSE )
+g17<-t(vcf16@gt)[-1,]
+colnames(g17)<-vcf16@fix[,3]
+
+
+geno<-bind_cols(g1,g2,g3,g4,g5,g6,g7,g8,g9,g10,g11,g12,g13,g15,g16,g17)
+geno$eid<-rownames(g1)
+g14$eid<-rownames(g14)
+geno<-merge(geno, g14, by="eid", all.x=T)
+rm(g1)
+rm(g2)
+rm(g3)
+rm(g4)
+rm(g5)
+rm(g6)
+rm(g7)
+rm(g8)
+rm(g9)
+rm(g10)
+rm(g11)
+rm(g12)
+rm(g13)
+rm(g14)
+rm(g15)
+rm(g16)
+rm(g17)
+rm(vcf1)
+rm(vcf11)
+rm(vcf12)
+rm(vcf14)
+rm(vcf5)
+rm(vcf6)
+rm(vcf7)
+rm(vcf2)
+rm(vcf16)
+rm(vcf10)
+rm(vcf17)
+rm(vcf9)
+rm(vcf3)
+rm(vcf22)
+rm(vcfX)
+rm(vcf15)
+geno<-geno%>%separate(eid, "eid", "_")
+write.csv(geno, "/media/cailu/Seagate Backup Plus Drive1/data_20230311/UKB_geno/bfilemaf0.1/FoodsIntakes/geno_foodintake240627.csv", row.names = F)
+
+geno<-read.csv("/media/cailu/Seagate Backup Plus Drive/data_20230311/UKB_geno/bfilemaf0.1/FoodsIntakes/geno_foodintake240627.csv")
+```
+
+
+
+```{r covariates, echo=FALSE}
+my_ukb_data2 <- ukb_df("ukb49672", path ="/media/cailu/Expansion/data_20230311/UKB/dat_download" )
+demo<-c("eid","sex_f31_0_0", "genetic_sex_f22001_0_0","year_of_birth_f34_0_0","ethnic_background_f21000_0_0" , "ethnic_background_f21000_1_0" , "ethnic_background_f21000_2_0", "body_mass_index_bmi_f21001_0_0", "body_mass_index_bmi_f21001_1_0" , "body_mass_index_bmi_f21001_2_0","body_mass_index_bmi_f21001_3_0" ,"weight_f21002_0_0" , "weight_f21002_1_0", "weight_f21002_2_0","weight_f21002_3_0" , "age_at_recruitment_f21022_0_0")
+pca<-my_ukb_data2[,c(1, 4661:4670)]
+my_ukb_data2<-my_ukb_data2[,demo][my_ukb_data2$eid %in% my_ukb_data_avg$eid,]
+
+
+additinal_traits<-names(my_ukb_data2)[grepl("average_weekly_red_wine_intake|average_weekly_beer_plus_cider_intake|average_weekly_spirits_intake_f1598|average_weekly_fortified_wine_intake|average_monthly_red_wine_intake|average_monthly_beer_plus_cider_intake|average_monthly_fortified_wine_intake|average_weekly_intake_of_other_alcoholic_drinks|average_monthly_intake_of_other_alcoholic_drinks|average_monthly_champagne_plus_white_wine_intake|average_weekly_champagne_plus_white_wine_intake|ham_intake_f103080|hard_cheese_intake_f102820|fizzy_drink_intake_f100170|spinach_intake_f104300|average_monthly_spirits_intake", names(my_ukb_data2))] 
+
+additinal_intakes<-my_ukb_data2[, names(my_ukb_data2)%in%c("eid", additinal_traits)]%>%
+  gather(key, value, -eid)%>%
+  drop_na(value)%>%
+  mutate(value=recode(value, "100"="1", "200"="2", "300"="3","400"="4", "500"="5", "600"="6", "555"="0.5", "444"="0.25", "111"="NA",
+                      "-1"="NA", "-3"="NA", "-10"="NA"))
+additinal_intakes$key<-substr(additinal_intakes$key, 1, nchar(additinal_intakes$key) - 4)
+additinal_intakes$value<-as.numeric(additinal_intakes$value)
+
+additinal_intakes$value<-ifelse(additinal_intakes$value>200, NA, additinal_intakes$value)
+
+additinal_intakes2<-additinal_intakes%>%
+  group_by(eid, key)%>%
+  summarise(avg=mean(value,na.rm = TRUE))%>%
+  pivot_wider(names_from = key, values_from = avg)
+
+write.csv(additinal_intakes2, "/media/cailu/Expansion1/ukb/bfilemaf01/variants_generegionmaf0.1/FoodsIntakers20241028/additinaltraits20241223.csv", row.names=F)
+```
+
+
+
+```{r merge data}
+df<-merge(geno, my_ukb_data2[, c(1,3,16)], by="eid")
+df<-merge(df,my_ukb_data_avg, by ="eid")
+
+```
+
+
+
+
+
+```{r pressure, echo=FALSE}
+my_ukb_data<-my_ukb_data2%>%filter(!(eid %in% df$eid))%>%
+  mutate(genetic_sex_f22001_0_0=recode(genetic_sex_f22001_0_0, "1"="Male", "0"="Female"))%>%
+  mutate(ethnic_background_f21000_0_0=recode(ethnic_background_f21000_0_0,
+                                             "1"="White",
+                                             "2"="Mixed",
+                                             "3"="Asian or Asian British",
+                                             "5"="Chinese",
+                                             "6"="Other ethnic group",
+                                             "1001"="British",
+                                             "1002"="Irish",
+                                             "1003"="Any other white background",
+                                             "2001"="White and Black Caribbean",
+                                             "2002"="White and Black African",
+                                              "2003"="White and Asian",
+                                              "2004"="Any other mixed background",
+                                              "3001"="Indian",
+                                              "3002"="Pakistani",
+                                              "3003"="Bangladeshi",
+                                              "3004"="Any other Asian background",
+                                              "4001"="Caribbean",
+                                              "4002"="African",
+                                              "4003"="Any other Black backgroun",
+                                             "-1"="Do not know",
+                                             "-3"="Prefer not to answer"))
+
+
+my_ukb_data3<-my_ukb_data[,c("genetic_sex_f22001_0_0","age_at_recruitment_f21022_0_0","ethnic_background_f21000_0_0")]
+
+
+
+write.csv(data.frame(table(my_ukb_data3$ethnic_background_f21000_0_0)), "demo1.csv", row.names = F)
+
+table(my_ukb_data3$genetic_sex_f22001_0_0)
+
+ukb_context(
+my_ukb_data, sex.var = "sex_f31_0_0" ,
+age.var = "age_at_recruitment_f21022_0_0",
+ethnicity.var = "ethnic_background_f21000_0_0",
+subset.var=FALSE
+)
+```
+
+```{r, European&unrelated}
+relsbj<-read.csv("/media/cailu/Seagate Backup Plus Drive1/data_20230311/UKB/Geno/ukb_rel_a57780_s488170.dat", sep="")
+ukb_gen_rel_count(relsbj, plot = TRUE)+geom_hline(yintercept =0.0884, linetype="dashed")+theme_bw()+theme(legend.position = c(0.7,0.85))
+
+w57780_2023.04.25 <- read.table("/media/cailu/Seagate Backup Plus Drive1/data_20230311/UKB/dat_download/w57780_2023-04-25.csv", quote="\"", comment.char="")
+
+
+my_ukb_data2 <- ukb_df("ukb49672", path ="/media/cailu/Seagate Backup Plus Drive1/data_20230311/UKB/dat_download" )
+
+Euro<-my_ukb_data2[, c("eid", "ethnic_background_f21000_0_0")]%>%
+  filter(ethnic_background_f21000_0_0 %in%c(1, 1001,1002,1003))
+
+subjects_race <- Euro%>%
+                filter(!(eid %in% w57780_2023.04.25 $V1))
+
+list_to_remove<- ukb_gen_samples_to_remove(relsbj, ukb_with_data=subjects_race$Sample,cutoff = 0.0884)
+
+subjects_race<-subjects_race%>%
+  filter(!(eid %in% list_to_remove))
+
+df<-df[df$eid %in%subjects_race$eid,]
+write.csv(df, "/media/cailu/Seagate Backup Plus Drive1/data_20230311/UKB_geno/bfilemaf0.1/FoodsIntakes/Food_intakes_missense_ready_analyses20240627.csv", row.names=F)
+
+```
+
+
+
+
+
+```{r GLM, rmoved relatied subject}
+#df<-read.csv("/media/cailu/Seagate Backup Plus Drive/data_20230311/UKB_geno/bfilemaf0.1/FoodsIntakes/Food_intakes_missense_ready_analyses20240627.csv")#only_0_0
+
+df<-read.csv("/media/cailu/Expansion1/ukb/bfilemaf01/variants_generegionmaf0.1/FoodsIntakers20241028/data_geno_foodintake_ready20241031.csv")
+
+names(df)[names(df)=="genetic_sex_f22001_0_0"]<-"sex"
+names(df)[names(df)=="age_at_recruitment_f21022_0_0" ]<-"age"
+
+pca<-read.csv("/media/cailu/Expansion1/ukb/bfilemaf01/variants_generegionmaf0.1/FoodsIntakers20241028/pca10.csv")
+colnames(pca)<-c("eid","PC1","PC2" ,"PC3","PC4","PC5","PC6","PC7","PC8","PC9","PC10")
+df<-merge(df, pca, by="eid")
+
+df$rs655415<-ifelse(df$rs655415==0, "0/0", ifelse(df$rs655415==1, "1/1", df$rs655415))
+df$sex<-as.numeric(df$sex)
+ 
+bread_intake_white<-read.csv("/media/cailu/Expansion1/ukb/bfilemaf01/variants_generegionmaf0.1/FoodsIntakers20241028/bread_intake_white.csv") 
+colnames(bread_intake_white)[2] <-"bread_intake_f1438"
+df<-merge(df, bread_intake_white, by="eid", all.x=T)
+
+##exculde subjects who withdrawed on 2024/12/17
+w57780_20241217 <- read.table("/media/cailu/Expansion1/ukb/w57780_20241217.csv", quote="\"", comment.char="")
+df<-df[!df$eid%in%w57780_20241217$V1,]
+
+
+marker<-read.csv("/media/cailu/Expansion1/ukb/bfilemaf01/variants_generegionmaf0.1/foodliking_20241221.csv")%>%
+  filter(FDR<=0.05)%>%
+  select(marker)%>%
+  distinct(marker)
+marker<-marker$marker 
+
+#11 marker names changed
+marker[!(marker%in%names(df))]
+
+#[1] "rs10743938...888" "rs605734"         "rs7130086...515"  "rs2173236...1035" "rs12224086"      
+#[6] "rs7124871"        "rs61890419"       "rs17496724"     
+
+
+names(df)[names(df)=="rs10743938...898"]<-"rs10743938...889"
+names(df)[names(df)=="rs605734...717"]<-"rs605734"
+names(df)[names(df)=="rs7130086...519"]<-"rs7130086...516"
+names(df)[names(df)=="rs2173236...1045"]<-"rs2173236...1036"
+names(df)[names(df)=="rs12224086...636"]<-"rs12224086" 
+names(df)[names(df)=="rs7124871...594"]<-"rs7124871" 
+names(df)[names(df)=="rs61890419...546"]<-"rs61890419"
+names(df)[names(df)=="rs17496724...568"]<-"rs17496724"
+
+
+##add additional traits
+additinal_traits<-read.csv("/media/cailu/Expansion1/ukb/bfilemaf01/variants_generegionmaf0.1/FoodsIntakers20241028/additinaltraits20241223.csv")
+
+df<-merge(df, additinal_traits,by="eid", all.x=TRUE)
+
+#write.csv(df,"/media/cailu/Expansion1/ukb/bfilemaf01/variants_generegionmaf0.1/FoodsIntakers20241028/all_geno_pheon_data_20241223.csv", row.names = F)
+
+ass<-marker<-read.csv("/media/cailu/Expansion1/ukb/bfilemaf01/variants_generegionmaf0.1/foodliking_20241221.csv")%>%
+  filter(FDR<=0.05)
+
+matched_traits <- read.csv("/media/cailu/Expansion1/ukb/bfilemaf01/variants_generegionmaf0.1/variants_generegionmaf0.1/ukb_liking_intake_20241223.csv",na.strings = "")[,c(1,3)]%>%
+  drop_na(`Corresponding.food.intake.traits.in.UK.Biobank`)
+
+matched_traits$Significant.Food.liking.traits.in.UK.Biobank<-paste0(matched_traits$Significant.Food.liking.traits.in.UK.Biobank, "_0_0")
+
+results <- data.frame()
+
+for (i in unique(ass$trait)){
+  for (j in subset(ass, trait==i)$marker){
+    sub<-subset(matched_traits, Significant.Food.liking.traits.in.UK.Biobank==i)
+    for (x in sub$`Corresponding.food.intake.traits.in.UK.Biobank`){
+  df2 <-df%>%
+    dplyr::select(x, j, "sex", "age","PC1","PC2" ,"PC3","PC4","PC5","PC6","PC7","PC8","PC9","PC10")%>%
+    drop_na()
+  colnames(df2)<-c("trait", "marker", "sex", "age", "PC1","PC2" ,"PC3","PC4","PC5","PC6","PC7","PC8","PC9","PC10")
+    
+    df2<-df2%>%
+      filter(marker%in%c("0/0", "0/1", "1/1"))
+      df2$trait<-log10(df2$trait+1)
+      model<-lm(trait~marker+sex+age+PC1+PC2+PC3+PC4+PC5+PC6+PC7+PC8+PC9+PC10, data=df2%>%
+                  mutate(marker=recode(marker, "0/0"=0, "0/1" =1, "1/1"=2)))
+      result1<- tidy(lm.beta(model))[2, c(2,3,4,6)]
+      reducedmodel<-lm(trait~sex+age+PC1+PC2+PC3+PC4+PC5+PC6+PC7+PC8+PC9+PC10, data=df2)
+      result1$variance_by_marker<-summary(model)$r.squared-summary(reducedmodel)$r.squared
+      result1$liking<-i
+      result1$trait<-x
+      result1$marker <-j
+      result1$beta_age<-tidy(lm.beta(model))[4, 2]$estimate
+      result1$beta_se_age<-tidy(lm.beta(model))[4, 4]$std.error
+      result1$P.vale_age<-tidy(lm.beta(model))[4, 6]$p.value
+      result1$beta_sex<-tidy(lm.beta(model))[3, 2]$estimate
+      result1$beta_se_sex<-tidy(lm.beta(model))[3, 4]$std.error
+      result1$P.vale_sex<-tidy(lm.beta(model))[3, 6]$p.value
+      
+      result1$sampleSize<-nrow(df2)
+      x<- t(data.frame(table(df2$marker)))
+      colnames(x)<-x[1,]
+      x<-t(as.data.frame(sapply(x[-1,], as.numeric)))
+    
+      y<-bind_cols(result1[1,], x)
+      y$Ref<-(x[1]+x[2]/2)/(x[1]+ x[2]+x[3])
+      y$Alt<-1-y$Ref
+      results<-bind_rows(results,y)
+    }
+  }
+}
+
+
+
+write.csv(results, "/media/cailu/Expansion1/ukb/bfilemaf01/variants_generegionmaf0.1/FoodsIntakers20241028/association_foodintake2401223.csv", row.names = F)
+
+##
+results3<-results%>%
+  distinct(trait, marker, .keep_all = T)%>%
+  filter(p.value<=0.05)
+
+g <- read_excel("/media/cailu/Expansion1/ukb/bfilemaf01/variants_generegionmaf0.1/missense&frameshift_variants_with_maf0.01_updated.xlsx")%>%
+  filter(SNP!="NA")
+
+freq<-data.frame()
+for (i in c(1,2,3,5,6,7,9,10,11,12,14,15,16,17,19,22,"X")){
+  freq1 <- read.delim(paste0("/media/cailu/Expansion1/ukb/bfilemaf01/variants_generegionmaf0.1/FoodsIntakes/c", i,"foodintake.afreq"), header=FALSE, comment.char="#")[c(2,5, 3,4,6)]
+  colnames(freq1)<-c("SNP", "A1_FREQS", "A1", "A2", "N")
+  freq1$A1<-as.character(freq1$A1)
+  freq<-bind_rows(freq, freq1)
+  }
+
+freq$A1[freq$A1=="TRUE"]<-"T"
+
+names(g)[c(7:8)]<-c("A2","A1")
+g1<-merge(g, freq, by=c("SNP", "A1", "A2"), all.x=T)
+
+g1$SNP[g1$SNP=="rs2074464"&g1$A1_FREQS>0.4]<-"rs2074464...235"
+g1$SNP[g1$SNP=="rs7124871"&g1$A1_FREQS>0.05]<-"rs7124871...594"
+g1$SNP[g1$SNP=="rs7120775"&g1$A1_FREQS>0.1]<-"rs7120775...520"
+g1$SNP[g1$SNP=="rs7120775"&g1$A1_FREQS<0.05]<-"rs7120775...521"
+g1$SNP[g1$SNP=="rs605734"]<-"rs605734...717"
+g1$SNP[g1$SNP=="rs7130086"&g1$A1_FREQS>0.2]<-"rs7130086...518"
+g1$SNP[g1$SNP=="rs7130086"&g1$A1_FREQS<0.1]<-"rs7130086...519"
+g1$SNP[g1$SNP=="rs6591700"]<-"rs6591700...610"
+g1$SNP[g1$SNP=="rs2173236"&g1$A1_FREQS>0.5]<-"rs2173236...1045"
+g1$SNP[g1$SNP=="rs10743938"&g1$A1_FREQS>0.7]<-"rs10743938...889"
+g1$SNP[g1$SNP=="rs10743938"&g1$A1_FREQS<0.1]<-"rs10743938...897"
+g1$SNP[g1$SNP=="rs61890419"]<-"rs61890419...546"
+g1$SNP[g1$SNP=="rs17496724"]<-"rs17496724...568"
+g1$SNP[g1$SNP=="rs12224086"]<-"rs12224086...636"
+g1$SNP[g1$SNP=="rs2173236"&g1$A1_FREQS>0.6]<-"rs2173236...1045"
+
+results4<-merge(results3,g1 , by.x= "marker", by.y = "SNP" , all.x=T)
+
+
+results4$marker<-gsub("\\.\\.\\.\\d+", "",results4$marker)
+
+write.csv(results4, "/media/cailu/Expansion1/ukb/bfilemaf01/variants_generegionmaf0.1/FoodsIntakers20241028/Food_intake20241223.csv", row.names=F)
+
+```
+
+
+
+
+
+
+

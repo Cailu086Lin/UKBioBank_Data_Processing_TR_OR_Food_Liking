@@ -1,0 +1,465 @@
+---
+title: "ukb_food_liking"
+author: "Caulu Lin"
+date: "5/31/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+pacman::p_load(ukbtools,vcfR,readxl, broom, dplyr, tidyr, scales, caret, ggstatsplot, tibble,lm.beta)
+```
+
+```{r ukb_data European only, echo=FALSE}
+
+relsbj<-read.csv("/media/cailu/Seagate Backup Plus Drive/data_20230311/UKB/Geno/ukb_rel_a57780_s488170.dat", sep="")
+ukb_gen_rel_count(relsbj, plot = TRUE)+geom_hline(yintercept =0.0884, linetype="dashed")+theme_bw()+theme(legend.position = c(0.7,0.85))
+
+w57780_20241217 <- read.table("/media/cailu/Expansion1/ukb/w57780_20241217.csv", quote="\"", comment.char="")
+
+subjects_race <- read.csv("/media/cailu/Seagate Backup Plus Drive/data_20230311/UKB/dat_download/Geno20221018/subjects_race.csv")%>%
+                filter(race=="European")%>%
+                filter(!(Sample %in% w57780_2023.04.25 $V1))
+
+list_to_remove<- ukb_gen_samples_to_remove(relsbj, ukb_with_data=subjects_race$Sample,cutoff = 0.0884)
+
+subjects_race<-subjects_race%>%
+  filter(!(Sample %in% list_to_remove))
+# To load the included example data
+
+my_ukb_data <- ukb_df("ukb51939", path = "/media/cailu/Seagate Backup Plus Drive/data_20230311/UKB/dat_download")
+my_ukb_data<-my_ukb_data[,c(1,2442:2592)]
+
+my_ukb_data<-my_ukb_data[my_ukb_data$eid %in% subjects_race$Sample,]
+```
+
+```{r ukb_data, extract id with pheno}
+my_ukb_data1<-my_ukb_data%>%
+    mutate_if(is.character, ~as.numeric(as.character(.)))
+my_ukb_data1$index<-rowSums(is.na(my_ukb_data1[, 2:151])) ##count how many NAs for each subjects
+my_ukb_data1<-my_ukb_data1[my_ukb_data1$index !=150,] ## remove subjects with 150 NAs, 
+
+my_ukb_data1$FID<-my_ukb_data1$eid
+my_ukb_data1$IID<-my_ukb_data1$eid
+subjects<-my_ukb_data1[,c("FID", "IID")]
+
+write.table(subjects, "subjects.txt", sep="\t", row.names = F, quote = F)
+```
+
+```{r geno}
+library(vcfR)
+vcf1 <- read.vcfR("/media/cailu/Seagate Backup Plus Drive/data_20230311/UKB_geno/bfilemaf0.1/c1flt.vcf", verbose = FALSE )
+g1<-t(vcf1@gt)[-1,]
+colnames(g1)<-vcf1@fix[,3]
+
+vcf5 <- read.vcfR("/media/cailu/Seagate Backup Plus Drive/data_20230311/UKB_geno/bfilemaf0.1/c5flt.vcf", verbose = FALSE )
+g2<-t(vcf5@gt)[-1,]
+colnames(g2)<-vcf5@fix[,3]
+
+vcf6 <- read.vcfR("/media/cailu/Seagate Backup Plus Drive/data_20230311/UKB_geno/bfilemaf0.1/c6flt.vcf", verbose = FALSE )
+g3<-t(vcf6@gt)[-1,]
+colnames(g3)<-vcf6@fix[,3]
+
+vcf7 <- read.vcfR("/media/cailu/Seagate Backup Plus Drive/data_20230311/UKB_geno/bfilemaf0.1/c7flt.vcf", verbose = FALSE )
+g4<-t(vcf7@gt)[-1,]
+colnames(g4)<-vcf7@fix[,3]
+
+vcf11 <- read.vcfR("/media/cailu/Seagate Backup Plus Drive/data_20230311/UKB_geno/bfilemaf0.1/c11flt.vcf", verbose = FALSE )
+g5<-t(vcf11@gt)[-1,]
+colnames(g5)<-vcf11@fix[,3]
+
+vcf12 <- read.vcfR("/media/cailu/Seagate Backup Plus Drive/data_20230311/UKB_geno/bfilemaf0.1/c12flt.vcf", verbose = FALSE )
+g6<-t(vcf12@gt)[-1,]
+colnames(g6)<-vcf12@fix[,3]
+
+vcf14 <- read.vcfR("/media/cailu/Seagate Backup Plus Drive/data_20230311/UKB_geno/bfilemaf0.1/c14flt.vcf", verbose = FALSE )
+g7<-t(vcf14@gt)[-1,]
+colnames(g7)<-vcf14@fix[,3]
+
+vcf2 <- read.vcfR("/media/cailu/Seagate Backup Plus Drive/data_20230311/UKB_geno/bfilemaf0.1/c2flt.vcf", verbose = FALSE )
+g8<-t(vcf2@gt)[-1,]
+colnames(g8)<-vcf2@fix[,3]
+
+vcf10 <- read.vcfR("/media/cailu/Seagate Backup Plus Drive/data_20230311/UKB_geno/bfilemaf0.1/c10flt.vcf", verbose = FALSE )
+g9<-data.frame(t(vcf10@gt)[-1,])
+colnames(g9)<-vcf10@fix[,3]
+
+vcf3 <- read.vcfR("/media/cailu/Seagate Backup Plus Drive/data_20230311/UKB_geno/bfilemaf0.1/c3flt.vcf", verbose = FALSE )
+g10<-t(vcf3@gt)[-1,]
+colnames(g10)<-vcf3@fix[,3]
+
+vcf17 <- read.vcfR("/media/cailu/Seagate Backup Plus Drive/data_20230311/UKB_geno/bfilemaf0.1/c17flt.vcf", verbose = FALSE )
+g11<-t(vcf17@gt)[-1,]
+colnames(g11)<-vcf17@fix[,3]
+
+vcf19 <- read.vcfR("/media/cailu/Seagate Backup Plus Drive/data_20230311/UKB_geno/bfilemaf0.1/c19flt.vcf", verbose = FALSE )
+g12<-t(vcf19@gt)[-1,]
+colnames(g12)<-vcf19@fix[,3]
+
+vcf22 <- read.vcfR("/media/cailu/Seagate Backup Plus Drive/data_20230311/UKB_geno/bfilemaf0.1/c22flt.vcf", verbose = FALSE )
+g13<-data.frame(t(vcf22@gt)[-1,])
+colnames(g13)<-vcf22@fix[,3]
+
+vcfX <- read.vcfR("/media/cailu/Seagate Backup Plus Drive/data_20230311/UKB_geno/bfilemaf0.1/cXflt.vcf", verbose = FALSE )
+g14<-data.frame(t(vcfX@gt)[-1,])
+colnames(g14)<-vcfX@fix[,3]
+
+vcf9 <- read.vcfR("/media/cailu/Seagate Backup Plus Drive/data_20230311/UKB_geno/bfilemaf0.1/c9flt.vcf", verbose = FALSE )
+g15<-t(vcf9@gt)[-1,]
+colnames(g15)<-vcf9@fix[,3]
+
+vcf15 <- read.vcfR("/media/cailu/Seagate Backup Plus Drive/data_20230311/UKB_geno/bfilemaf0.1/c15flt.vcf", verbose = FALSE )
+g16<-t(vcf15@gt)[-1,]
+colnames(g16)<-vcf15@fix[,3]
+
+vcf16 <- read.vcfR("/media/cailu/Seagate Backup Plus Drive/data_20230311/UKB_geno/bfilemaf0.1/c16flt.vcf", verbose = FALSE )
+g17<-t(vcf16@gt)[-1,]
+colnames(g17)<-vcf16@fix[,3]
+
+
+geno<-bind_cols(g1,g2,g3,g4,g5,g6,g7,g8,g9,g10,g11,g12,g13,g15,g16,g17)
+geno$eid<-rownames(g1)
+g14$eid<-rownames(g14)
+geno<-merge(geno, g14, by="eid", all.x=T)
+rm(g1)
+rm(g2)
+rm(g3)
+rm(g4)
+rm(g5)
+rm(g6)
+rm(g7)
+rm(g8)
+rm(g9)
+rm(g10)
+rm(g11)
+rm(g12)
+rm(g13)
+rm(g14)
+rm(g15)
+rm(g16)
+rm(g17)
+rm(vcf1)
+rm(vcf11)
+rm(vcf12)
+rm(vcf14)
+rm(vcf5)
+rm(vcf6)
+rm(vcf7)
+rm(vcf2)
+rm(vcf16)
+rm(vcf10)
+rm(vcf17)
+rm(vcf9)
+rm(vcf3)
+rm(vcf22)
+rm(vcfX)
+rm(vcf15)
+geno<-geno%>%separate(eid, "eid", "_")
+write.csv(geno, "/media/cailu/Seagate Backup Plus Drive/data_20230311/UKB_geno/bfilemaf0.1/variants_generegionmaf0.1/geno20240605.csv", row.names = F)
+
+##nonsense+frameshift
+geno_add<-read.vcfR("/media/cailu/Seagate Backup Plus Drive/data_20230311/UKB_geno/nonsenseframeshift/nfv.vcf", verbose = FALSE )
+gNonsenseFrameshift<-t(geno_add@gt)[-1,]
+colnames(gNonsenseFrameshift)<-geno_add@fix[,3]
+gNonsenseFrameshift<-data.frame(gNonsenseFrameshift)
+gNonsenseFrameshift$eid<-rownames(gNonsenseFrameshift)
+gNonsenseFrameshift<-gNonsenseFrameshift%>%separate(eid, "eid", "_")
+
+```
+
+```{r covariates, echo=FALSE}
+my_ukb_data2 <- ukb_df("ukb49672", path ="/media/cailu/Seagate Backup Plus Drive/data_20230311/UKB/dat_download" )
+demo<-c("eid","sex_f31_0_0", "genetic_sex_f22001_0_0","year_of_birth_f34_0_0","ethnic_background_f21000_0_0" , "ethnic_background_f21000_1_0" , "ethnic_background_f21000_2_0", "body_mass_index_bmi_f21001_0_0", "body_mass_index_bmi_f21001_1_0" , "body_mass_index_bmi_f21001_2_0","body_mass_index_bmi_f21001_3_0" ,"weight_f21002_0_0" , "weight_f21002_1_0", "weight_f21002_2_0","weight_f21002_3_0" , "age_at_recruitment_f21022_0_0")
+pca<-my_ukb_data2[,c(1, 4661:4670)]
+my_ukb_data2<-my_ukb_data2[,demo][my_ukb_data2$eid %in% my_ukb_data$eid,]
+
+```
+
+```{r merge data}
+
+df<-merge(geno, my_ukb_data2[, c(1,3,16)], by="eid")
+df<-merge(df, my_ukb_data, by ="eid")
+
+write.csv(df, "/media/cailu/Seagate Backup Plus Drive/data_20230311/UKB_geno/v2/data_ready_analyses.v2.csv", row.names=F)
+```
+
+
+```{r pressure, echo=FALSE}
+my_ukb_data3<-my_ukb_data2%>%filter(eid %in% df$eid)%>%
+  mutate(genetic_sex_f22001_0_0=recode(genetic_sex_f22001_0_0, "1"="Male", "0"="Female"))%>%
+  mutate(ethnic_background_f21000_0_0=recode(ethnic_background_f21000_0_0,
+                                             "1"="White",
+                                             "2"="Mixed",
+                                             "3"="Asian or Asian British",
+                                             "5"="Chinese",
+                                             "6"="Other ethnic group",
+                                             "1001"="British",
+                                             "1002"="Irish",
+                                             "1003"="Any other white background",
+                                             "2001"="White and Black Caribbean",
+                                             "2002"="White and Black African",
+                                              "2003"="White and Asian",
+                                              "2004"="Any other mixed background",
+                                              "3001"="Indian",
+                                              "3002"="Pakistani",
+                                              "3003"="Bangladeshi",
+                                              "3004"="Any other Asian background",
+                                              "4001"="Caribbean",
+                                              "4002"="African",
+                                              "4003"="Any other Black backgroun",
+                                             "-1"="Do not know",
+                                             "-3"="Prefer not to answer"))
+
+
+
+my_ukb_data4<-my_ukb_data3[,c("genetic_sex_f22001_0_0","age_at_recruitment_f21022_0_0","ethnic_background_f21000_0_0")]
+
+
+
+write.csv(data.frame(table(my_ukb_data4$ethnic_background_f21000_0_0)), "demo1.csv", row.names = F)
+
+table(my_ukb_data4$genetic_sex_f22001_0_0)
+
+ukb_context(
+my_ukb_data4, sex.var = "genetic_sex_f22001_0_0" ,
+age.var = "age_at_recruitment_f21022_0_0",
+ethnicity.var = "ethnic_background_f21000_0_0",
+subset.var=FALSE
+)
+```
+
+
+```{r example}
+path_to_example_data <- system.file("extdata", package = "ukbtools")
+my_ukb_data <- ukb_df("ukbxxxx", path =path_to_example_data)
+
+ukb_context(
+my_ukb_data,
+subset.var = my_ukb_data$body_mass_index_bmi_f21001_0_0 >= 25,
+bar.position = "stack"
+)
+```
+
+```{r GLM, rmoved relatied subject}
+df<-read.csv("/media/cailu/Seagate Backup Plus Drive/data_20230311/UKB_geno/plink/data_misenses.csv")
+names(df)[names(df)=="genetic_sex_f22001_0_0"]<-"sex"
+names(df)[names(df)=="age_at_recruitment_f21022_0_0" ]<-"age"
+
+df<-merge(gNonsenseFrameshift, df, by="eid")
+
+pca10 <- read.delim("/media/cailu/Seagate Backup Plus Drive/data_20230311/UKB/dat_download/Geno20221018/GD_AIM/pca10.eigenvec")[,-1]
+df<-merge(df, pca10, by.x="eid", by.y="IID")
+
+
+####
+df<-merge(geno, df[,-c(2:883)], by="eid", all=T)
+write.csv(df,"/media/cailu/Seagate Backup Plus Drive/data_20230311/UKB_geno/bfilemaf0.1/variants_generegionmaf0.1/geno_pheno20240605.csv", row.names=F , quote=F)
+df <- read_csv("/media/cailu/Expansion1/ukb/bfilemaf01/variants_generegionmaf0.1/geno_pheno20240605.csv")
+
+df$rs655415<-ifelse(df$rs655415==0, "0/0", ifelse(df$rs655415==1, "1/1", df$rs655415))
+df$sex<-as.numeric(df$sex)
+
+##exculde subjects who withdrawed on 2024/12/17
+w57780_20241217 <- read.table("/media/cailu/Expansion1/ukb/w57780_20241217.csv", quote="\"", comment.char="")
+df<-df[!df$eid%in%w57780_20241217$V1,]
+
+marker<-names(df)[2:1222]
+trait<-names(df)[c(1225:1373)]
+drop<-c("liking_for_bicycling_f20614_0_0", "liking_for_working_up_a_sweat_f20749_0_0", "when_food_preferences_questionnaire_completed_f20750_0_0",
+        "liking_for_exercising_alone_f20656_0_0" ,"liking_for_exercising_with_others_f20657_0_0", "liking_for_watching_television_f20741_0_0","liking_for_taking_the_stairs_f20733_0_0","liking_for_going_to_the_gym_f20669_0_0","liking_for_going_to_the_pub_f20670_0_0" ,"liking_for_going_to_a_cafe_f20668_0_0")
+trait<-trait[!trait%in%drop]
+
+
+results <- data.frame()
+for (i in trait){
+  for (j in marker){
+  df2 <-df%>%
+    dplyr::select(i, j, "sex", "age","PC1","PC2" ,"PC3","PC4","PC5","PC6","PC7","PC8","PC9","PC10")%>%
+    drop_na()
+  colnames(df2)<-c("trait", "marker", "sex", "age", "PC1","PC2" ,"PC3","PC4","PC5","PC6","PC7","PC8","PC9","PC10")
+  df2<-df2[df2$trait>0&df2$trait<10,]
+  if(length(unique(df2$marker))>1){
+  df2$trait<-as.numeric(df2$trait)
+  df2<-df2%>%mutate(marker=recode(marker, "0/0"=0, "0/1" =1, "1/1"=2))%>%drop_na()
+  model<-lm(trait~marker+sex+age+PC1+PC2+PC3+PC4+PC5+PC6+PC7+PC8+PC9+PC10, data=df2)
+  result1<- tidy(lm.beta(model))[2, c(2,3,4,6)]
+  reducedmodel<-lm(trait~sex+age+PC1+PC2+PC3+PC4+PC5+PC6+PC7+PC8+PC9+PC10, data=df2)
+  result1$variance_by_marker<-summary(model)$r.squared-summary(reducedmodel)$r.squared
+  result1$trait<-i
+  result1$marker <-j
+  result1$beta_age<-tidy(lm.beta(model))[4, 2]$estimate
+  result1$beta_se_age<-tidy(lm.beta(model))[4, 4]$std.error
+  result1$P.vale_age<-tidy(lm.beta(model))[4, 6]$p.value
+  result1$beta_sex<-tidy(lm.beta(model))[3, 2]$estimate
+  result1$beta_se_sex<-tidy(lm.beta(model))[3, 4]$std.error
+  result1$P.vale_sex<-tidy(lm.beta(model))[3, 6]$p.value
+  result1$sampleSize<-nrow(df2)
+  x<- t(data.frame(table(df2$marker)))
+  colnames(x)<-x[1,]
+  x<-t(as.data.frame(sapply(x[-1,], as.numeric)))
+  y<-bind_cols(result1[1,], x)
+  y$Ref<-(x[1]+x[2]/2)/(x[1]+ x[2]+x[3])
+  y$Alt<-1-y$Ref
+  }else{y<-data.frame(trait=NA, marker=NA,  sampleSize=nrow(df2))
+  y$trait<-i
+  y$marker <-j
+  }
+   results<-bind_rows(results,y)
+  }
+}
+
+
+write.csv(results, "/media/cailu/Expansion1/ukb/bfilemaf01/variants_generegionmaf0.1/FoodsIntakers20241028/Liking_association_updated_2024.12.21.csv", row.names = F)
+
+##compute FDR
+#results<-read.csv("/media/cailu/Seagate Backup Plus #Drive/data_20230311/UKB_geno/bfilemaf0.1/variants_generegionmaf0.1/foodliking_20240607.csv")
+
+results2<-results[order(results$p.value),]
+results2$FDR<-p.adjust(results2$p.value, method="fdr", n=nrow(results2))
+
+write.csv(results2, "/media/cailu/Expansion1/ukb/bfilemaf01/variants_generegionmaf0.1/foodliking_20241221.csv", row.names=F)
+
+##compute BF using snp filter LD=0.8 by 34 linking traits *BF
+ldall0.8 <- read.csv("/media/cailu/Seagate Backup Plus Drive/data_20230311/UKB_geno/bfilemaf0.1/LD2_allvariants/ldall0.8.ld", sep="")
+
+ldall0.8$SNP_A<-gsub("\\.\\d+", "",ldall0.8$SNP_A)
+ldall0.8$SNP_B<-gsub("\\.\\d+", "",ldall0.8$SNP_B)
+all_snps <- read.table("/media/cailu/Seagate Backup Plus Drive/data_20230311/UKB_geno/bfilemaf0.1/variants_generegionmaf0.1/all_snps.txt", quote="\"", comment.char="")$V1
+
+list_snps_paired<-all_snps[all_snps%in%ldall0.8$SNP_A|all_snps%in%ldall0.8$SNP_B]
+snps_to_remove <- list_snps_paired[c(TRUE, FALSE)]
+list_snps_clumped<-all_snps[!all_snps%in%snps_to_remove]
+N=length(list_snps_clumped)*34
+Threshold<-0.05/N
+
+###
+results3<-results2%>%
+  filter(FDR<=0.05)
+
+g <- read_excel("/media/cailu/Expansion1/ukb/bfilemaf01/variants_generegionmaf0.1/missense&frameshift_variants_with_maf0.01_updated.xlsx")%>%
+  filter(SNP!="NA")
+
+freq<-data.frame()
+for (i in c(1,2,3,5,6,7,9,10,11,12,14,15,16,17,19,22,"X")){
+  freq1 <- read.delim(paste0("/media/cailu/Expansion1/ukb/bfilemaf01/c", i,"flt.afreq"), header=FALSE, comment.char="#")[c(2,5, 3,4,6)]
+  colnames(freq1)<-c("SNP", "A1_FREQS", "A1", "A2", "N")
+  freq1$A1<-as.character(freq1$A1)
+  freq<-bind_rows(freq, freq1)
+  }
+
+freq$A1[freq$A1=="TRUE"]<-"T"
+
+names(g)[c(7:8)]<-c("A2","A1")
+g1<-merge(g, freq, by=c("SNP", "A1", "A2"), all.x=T)
+
+g1$SNP[g1$SNP=="rs2074464"&g1$A1_FREQS<0.02]<-"rs2074464...235"
+g1$SNP[g1$SNP=="rs2173236"&g1$A1_FREQS>0.6]<-"rs2173236...1035"
+g1$SNP[g1$SNP=="rs10743938"&g1$A1_FREQS>0.7]<-"rs10743938...888"
+g1$SNP[g1$SNP=="rs7130086"&g1$A1_FREQS<0.1]<-"rs7130086...515"
+#g1$SNP[g1$SNP=="rs7120775"&g1$A1_FREQS>0.1]<-"rs7120775...516"
+#g1$SNP[g1$SNP=="rs10743938"&g1$A1_FREQS<0.1]<-"rs10743938...887"
+
+results4<-merge(results3,g1 , by.x= "marker", by.y = "SNP" , all.x=T)
+
+
+results4$marker<-gsub("\\.\\.\\.\\d+", "",results4$marker)
+
+write.csv(results4[, c(1,7,2:5,20,6,14:19,21:33, 8:13)], "/media/cailu/Expansion1/ukb/bfilemaf01/variants_generegionmaf0.1/food_liking_associtions202401221.csv",  quote = T, row.names=F)
+
+```
+
+```{r check FDR by removing duplicated markers with multiple allele, keep on marker}
+results<-read.csv("/media/cailu/Expansion1/ukb/bfilemaf01/variants_generegionmaf0.1/foodliking_20240607.csv")
+
+x<-results
+
+x$marker<-gsub("\\.\\.\\.\\d+", "",x$marker)
+  
+x<-x%>%distinct(trait, marker, .keep_all=T)
+x2<-x[order(x$p.value),]
+x2$FDR2<-p.adjust(x2$p.value, method="fdr", n=nrow(x2))
+x3<-x2%>%
+  filter(FDR2<=0.05)
+x4<-x2%>%
+  filter(FDR<=0.05)
+```
+
+```{r ## find correspond liking -intake}
+
+fd <- read_excel("SignificantAssociations_foodintake240628.xlsx")
+mtch<-read.csv("/media/cailu/Seagate Backup Plus Drive1/data_20230311/UKB_geno/bfilemaf0.1/FoodsIntakes/matchedtrait.csv")
+mtch$key2<-paste0(mtch$Corresponding.food.intake.traits.in.UK.Biobank, "_0_0")
+
+lktrait<-unique(x4$trait)
+lkmarker<-unique(x4$marker)
+fdresults <-data.frame()
+for (i in lktrait ){
+  for (j in lkmarker){
+  sub<-fd[fd$trait %in% subset(mtch,key==i)$key2 &fd$marker==j,]
+  if (nrow(sub)>0){
+    fdresults<-bind_rows(fdresults, sub)}else{
+     fdresults<-fdresults
+    }
+  }
+}
+
+```
+
+
+```{r calculate total effect, echo=FALSE}
+df<-read.csv("/media/cailu/Seagate Backup Plus Drive/data_20230311/UKB_geno/bfilemaf0.1/variants_generegionmaf0.1/geno_pheno20240605.csv")
+asso<-read.csv("/media/cailu/Seagate Backup Plus Drive/data_20230311/UKB_geno/bfilemaf0.1/variants_generegionmaf0.1/foodliking_20240607.csv")%>%
+  filter(FDR<=0.05)
+
+trait<-unique(asso$trait)
+
+result<-data.frame()
+for (i in trait){
+  temp<-data.frame(trait=NA, r2=NA, p=NA, N=NA)
+  list_snps<-asso[asso$trait==i,]$marker
+  ExVar <- toString(paste(list_snps, "+ ", collapse = ""))
+  ExVar <- substr(ExVar, 1, nchar(ExVar)-3)  
+  dat<-df[, c(i,list_snps, "sex", "age","PC1","PC2" ,"PC3","PC4","PC5","PC6","PC7","PC8","PC9","PC10")]
+  dat<-dat[dat[,1]<10&dat[,1]>0,]
+  m0 <- lm(formula(paste(i,"~sex+age+PC1+PC2+PC3+PC4+PC5+PC6+PC7+PC8+PC9+PC10")),dat)
+  m1 <- lm(formula(paste(i,"~",ExVar,"+sex+age+PC1+PC2+PC3+PC4+PC5+PC6+PC7+PC8+PC9+PC10")),dat)
+  m0s <- summary(m0)
+  m1s <- summary(m1)
+  temp$trait<-i
+  temp$r2 <- m1s$r.squared - m0s$r.squared
+  m2ll <- as.numeric((-2)*(logLik(m0)-logLik(m1)))
+  temp$p <- 1 - pchisq(q=m2ll,df = 1) # calculate p-value from -2*loglikelihood
+  temp$N<-length(list_snps)
+  result<-bind_rows(result, temp)
+}
+
+```
+
+```{r create beta matrix, echo=FALSE}
+df<-read.csv("/media/cailu/Seagate Backup Plus Drive1/data_20230311/UKB_geno/bfilemaf0.1/variants_generegionmaf0.1/geno_pheno20240605.csv")
+asso<-read.csv("/media/cailu/Seagate Backup Plus Drive/data_20230311/UKB_geno/bfilemaf0.1/variants_generegionmaf0.1/foodliking_20240607.csv")%>%
+  filter(FDR<=0.05)
+
+trait<-unique(asso$trait)
+marker<-unique(asso$marker)
+inforIVresult<-data.frame(matrix(NA, nrow = length(marker), ncol = length(trait)))
+colnames(inforIVresult)<-trait
+rownames(inforIVresult)<-marker
+
+for (i in trait){
+  for(j in marker){
+  df2 <-df%>%
+    dplyr::select(i, j, "sex", "age","PC1","PC2" ,"PC3","PC4","PC5","PC6","PC7","PC8","PC9","PC10")%>%
+    drop_na()
+  colnames(df2)<-c("trait", "marker", "sex", "age", "PC1","PC2" ,"PC3","PC4","PC5","PC6","PC7","PC8","PC9","PC10")
+  df2<-df2[df2$trait>0&df2$trait<10,]
+  model<-lm(trait~marker+sex+age+PC1+PC2+PC3+PC4+PC5+PC6+PC7+PC8+PC9+PC10, data=df2%>%mutate(marker=recode(marker, "0/0"=0, "0/1" =1, "1/1"=2)))
+  inforIVresult[j,i]<-tidy(lm.beta(model))[2, 3]
+}
+}
+
+write.csv(inforIVresult, "standardeffect_SNP_traits.csv")
+```
+
+sessionIfor()
+
